@@ -12,6 +12,11 @@ const optional = (name: string, fallbackName?: string): string | null => {
 };
 
 const number = (name: string, fallback: number): number => Number(required(name, String(fallback)));
+const flag = (name: string, fallback = false): boolean => {
+  const value = process.env[name];
+  if (value === undefined || value === "") return fallback;
+  return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
+};
 
 export const config = {
   apiPort: number("API_PORT", 3001),
@@ -34,8 +39,14 @@ export const config = {
   frontendApiBaseUrl: required("FRONTEND_API_BASE_URL", "http://api:3001"),
   prefundingFeeBps: number("PREFUNDING_FEE_BPS", 35),
   oracleMode: required("ORACLE_MODE", "mock"),
+  oracleSource: required("ORACLE_SOURCE", "demo_adapter"),
+  reflectorPulseContractId: optional("REFLECTOR_PULSE_CONTRACT_ID"),
+  reflectorBaseAsset: required("REFLECTOR_BASE_ASSET", "USDC"),
+  reflectorQuoteAsset: required("REFLECTOR_QUOTE_ASSET", "USDC"),
+  reflectorStalenessSeconds: number("REFLECTOR_STALENESS_SECONDS", 900),
   watcherPollIntervalMs: number("WATCHER_POLL_INTERVAL_MS", 15000),
   proverPollIntervalMs: number("PROVER_POLL_INTERVAL_MS", 5000),
+  proverMode: required("PROVER_MODE", "alpha_demo_prover_worker"),
   ozConfidentialRoot: required("OZ_CONFIDENTIAL_ROOT", "./oz-confidential"),
   hostSep10Account: required("HOST_SEP10_ACCOUNT", "REPLACE_ME"),
   distributionAccount: required("DISTRIBUTION_ACCOUNT", "REPLACE_ME"),
@@ -47,6 +58,8 @@ export const config = {
     auditor: optional("AUDITOR_PUBLIC_KEY")
   },
   participantPolicyOperatorSecretKey: optional("PARTICIPANT_POLICY_OPERATOR_SECRET_KEY"),
+  creditExecutorSecretKey: optional("CREDIT_EXECUTOR_SECRET_KEY"),
+  requireConfidentialRepaymentTransfer: flag("REQUIRE_CONFIDENTIAL_REPAYMENT_TRANSFER", false),
   contracts: {
     participantPolicy: optional("PARTICIPANT_POLICY_CONTRACT_ID"),
     collateralPolicy: optional("COLLATERAL_POLICY_CONTRACT_ID"),
@@ -55,6 +68,7 @@ export const config = {
     prefundingCreditLine: optional("PREFUNDING_CREDIT_LINE_CONTRACT_ID"),
     collateralSufficiencyVerifier: optional("COLLATERAL_SUFFICIENCY_VERIFIER_CONTRACT_ID"),
     collateralToken: optional("COLLATERAL_TOKEN_CONTRACT_ID"),
+    confidentialCusdc: optional("CONFIDENTIAL_CUSDC_CONTRACT_ID", "CUSDC_CONTRACT_ID"),
     disclosureGrantRegistry: optional(
       "DISCLOSURE_GRANT_REGISTRY_CONTRACT_ID",
       "DISCLOSURE_REGISTRY_CONTRACT_ID"

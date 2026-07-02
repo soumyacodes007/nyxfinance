@@ -940,12 +940,20 @@ impl Runner {
         Ok(())
     }
 
-    fn print_collateral_fixture(&self, lock_key_hex: &str, position_secret_dec: &str) -> Result<()> {
+    fn print_collateral_fixture(
+        &self,
+        lock_key_hex: &str,
+        position_secret_dec: &str,
+        oracle_price_e7_override: Option<&str>,
+    ) -> Result<()> {
         let collateral_amount = 2_000u128;
         let collateral_randomness = BigUint::from(111u32);
         let credit_amount = 1_000u128;
         let credit_randomness = BigUint::from(222u32);
-        let oracle_price_e7 = 10_000_000u128;
+        let oracle_price_e7 = match oracle_price_e7_override {
+            Some(value) => value.parse::<u128>().context("invalid oracle price e7 decimal")?,
+            None => 10_000_000u128,
+        };
         let haircut_bps = 500u32;
         let tenor_days = 3u32;
         let lock_key = BigUint::parse_bytes(lock_key_hex.trim_start_matches("0x").as_bytes(), 16)
@@ -3825,7 +3833,8 @@ fn main() -> Result<()> {
         "collateral-fixture" => {
             let lock_key = env::args().nth(2).context("missing lock key hex")?;
             let position_secret = env::args().nth(3).context("missing position secret decimal")?;
-            runner.print_collateral_fixture(&lock_key, &position_secret)
+            let oracle_price_e7 = env::args().nth(4);
+            runner.print_collateral_fixture(&lock_key, &position_secret, oracle_price_e7.as_deref())
         }
         "repayment-history-fixture" => {
             let position_id = env::args().nth(2).context("missing position id hex")?;
@@ -3834,7 +3843,7 @@ fn main() -> Result<()> {
         }
         _ => {
             eprintln!(
-                "usage: cargo run -p oz-confidential-runner -- <prove-of-life|phase3-local|phase3-testnet|phase4-local|phase4-testnet|phase6-local-deploy|phase6-testnet-deploy|collateral-fixture|repayment-history-fixture>"
+                "usage: cargo run -p oz-confidential-runner -- <prove-of-life|phase3-local|phase3-testnet|phase4-local|phase4-testnet|phase6-local-deploy|phase6-testnet-deploy|collateral-fixture LOCK_KEY POSITION_SECRET [ORACLE_PRICE_E7]|repayment-history-fixture>"
             );
             std::process::exit(1);
         }

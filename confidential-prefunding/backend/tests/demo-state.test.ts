@@ -28,6 +28,12 @@ const baseConfig = {
   proverPollIntervalMs: 5000,
   ozConfidentialRoot: "./oz-confidential",
   oracleMode: "mock",
+  oracleSource: "demo_adapter",
+  reflectorPulseContractId: "CREFLECTOR",
+  reflectorBaseAsset: "USDC",
+  reflectorQuoteAsset: "USDC",
+  reflectorStalenessSeconds: 900,
+  proverMode: "alpha_demo_prover_worker",
   demoAccounts: {
     alpha: "GALPHA",
     facility: "GFACILITY",
@@ -35,6 +41,8 @@ const baseConfig = {
   },
   demoAnchorSecretKey: null,
   participantPolicyOperatorSecretKey: null,
+  creditExecutorSecretKey: null,
+  requireConfidentialRepaymentTransfer: false,
   contracts: {
     participantPolicy: "CPOLICY",
     collateralPolicy: "CCOLLATERAL",
@@ -43,6 +51,7 @@ const baseConfig = {
     prefundingCreditLine: "CCREDIT",
     collateralSufficiencyVerifier: "CVERIFY",
     collateralToken: "CTOKEN",
+    confidentialCusdc: "CCUSDC",
     disclosureGrantRegistry: null,
     repaymentHistory: null,
     repaymentHistoryVerifier: null

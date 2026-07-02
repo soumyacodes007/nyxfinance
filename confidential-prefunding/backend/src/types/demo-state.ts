@@ -37,14 +37,23 @@ export type DemoState = {
     latestQuoteId: string | null;
     latestProofJobId: string | null;
     latestDisclosureGrantId: string | null;
+    latestConfidentialTransferTxHash: string | null;
   };
   dataSources: {
     quote: {
       oracleMode: string;
+      oracleSource: string;
+      reflectorPulseContractId: string | null;
       participantPolicy: "chain" | "missing_config";
       collateralPolicyRegistry: "chain" | "missing_config";
       oracleAdapter: "chain" | "missing_config";
       fallbackOrStaticValues: string[];
+    };
+    privacy: {
+      proverMode: string;
+      privateWitnessBoundary: string;
+      backendStoresPlaintextAmounts: false;
+      liveAuditorCiphertextRefs: "present" | "missing";
     };
     phase6: {
       repaymentHistoryRegistry: "chain" | "missing_config";

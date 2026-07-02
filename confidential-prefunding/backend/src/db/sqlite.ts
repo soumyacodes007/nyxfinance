@@ -210,13 +210,23 @@ export const updateSepStatus = (
   db: AppDatabase,
   anchorTransactionId: string,
   sepStatus: SepStatus,
-  raw?: unknown
+  raw?: unknown,
+  stellarTransactionId?: string | null
 ): void => {
   db.prepare(`
     UPDATE anchor_transactions
-    SET sep_status = ?, raw = COALESCE(?, raw), updated_at = ?
+    SET sep_status = ?,
+        stellar_transaction_id = COALESCE(?, stellar_transaction_id),
+        raw = COALESCE(?, raw),
+        updated_at = ?
     WHERE anchor_transaction_id = ?
-  `).run(sepStatus, raw ? JSON.stringify(raw) : null, nowIso(), anchorTransactionId);
+  `).run(
+    sepStatus,
+    stellarTransactionId ?? null,
+    raw ? JSON.stringify(raw) : null,
+    nowIso(),
+    anchorTransactionId
+  );
 };
 
 export const updateProductStatus = (
@@ -398,6 +408,131 @@ export const insertContractEvent = (
     nowIso()
   );
   return result.changes > 0;
+};
+
+export type ConfidentialTransferEvidence = {
+  id: string;
+  anchorTransactionId: string | null;
+  positionId: string;
+  direction: "draw" | "repayment";
+  tokenContractId: string;
+  method: "confidential_transfer" | "confidential_transfer_from";
+  signer: string;
+  spender: string | null;
+  fromAccount: string;
+  toAccount: string;
+  transferCommitment: string | null;
+  txHash: string;
+  ledger: number | null;
+  auditorPayload: Record<string, unknown> | null;
+  eventPayload: Record<string, unknown>;
+  dataXdrSha256: string;
+  createdAt: string;
+};
+
+const mapConfidentialTransferEvidence = (row: {
+  id: string;
+  anchor_transaction_id: string | null;
+  position_id: string;
+  direction: "draw" | "repayment";
+  token_contract_id: string;
+  method: "confidential_transfer" | "confidential_transfer_from";
+  signer: string;
+  spender: string | null;
+  from_account: string;
+  to_account: string;
+  transfer_commitment: string | null;
+  tx_hash: string;
+  ledger: number | null;
+  auditor_payload: string | null;
+  event_payload: string;
+  data_xdr_sha256: string;
+  created_at: string;
+}): ConfidentialTransferEvidence => ({
+  id: row.id,
+  anchorTransactionId: row.anchor_transaction_id,
+  positionId: row.position_id,
+  direction: row.direction,
+  tokenContractId: row.token_contract_id,
+  method: row.method,
+  signer: row.signer,
+  spender: row.spender,
+  fromAccount: row.from_account,
+  toAccount: row.to_account,
+  transferCommitment: row.transfer_commitment,
+  txHash: row.tx_hash,
+  ledger: row.ledger,
+  auditorPayload: row.auditor_payload ? parseJson<Record<string, unknown>>(row.auditor_payload) : null,
+  eventPayload: parseJson<Record<string, unknown>>(row.event_payload),
+  dataXdrSha256: row.data_xdr_sha256,
+  createdAt: row.created_at
+});
+
+export const insertConfidentialTransferEvidence = (
+  db: AppDatabase,
+  evidence: Omit<ConfidentialTransferEvidence, "createdAt">
+): void => {
+  db.prepare(`
+    INSERT INTO confidential_transfer_evidence
+      (id, anchor_transaction_id, position_id, direction, token_contract_id, method, signer,
+       spender, from_account, to_account, transfer_commitment, tx_hash, ledger, auditor_payload,
+       event_payload, data_xdr_sha256, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    evidence.id,
+    evidence.anchorTransactionId,
+    evidence.positionId,
+    evidence.direction,
+    evidence.tokenContractId,
+    evidence.method,
+    evidence.signer,
+    evidence.spender,
+    evidence.fromAccount,
+    evidence.toAccount,
+    evidence.transferCommitment,
+    evidence.txHash,
+    evidence.ledger,
+    evidence.auditorPayload ? JSON.stringify(evidence.auditorPayload) : null,
+    JSON.stringify(evidence.eventPayload),
+    evidence.dataXdrSha256,
+    nowIso()
+  );
+};
+
+export const listConfidentialTransferEvidence = (
+  db: AppDatabase,
+  input: { positionId?: string; anchorTransactionId?: string; limit?: number } = {}
+): ConfidentialTransferEvidence[] => {
+  const limit = Math.max(1, Math.min(input.limit ?? 20, 100));
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  if (input.positionId) {
+    clauses.push("position_id = ?");
+    params.push(input.positionId);
+  }
+  if (input.anchorTransactionId) {
+    clauses.push("anchor_transaction_id = ?");
+    params.push(input.anchorTransactionId);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const rows = db
+    .prepare(`
+      SELECT * FROM confidential_transfer_evidence
+      ${where}
+      ORDER BY created_at DESC
+      LIMIT ?
+    `)
+    .all(...params, limit) as Parameters<typeof mapConfidentialTransferEvidence>[0][];
+  return rows.map(mapConfidentialTransferEvidence);
+};
+
+export const getLatestConfidentialTransferEvidence = (
+  db: AppDatabase
+): ConfidentialTransferEvidence | null => {
+  const row = db
+    .prepare("SELECT * FROM confidential_transfer_evidence ORDER BY created_at DESC LIMIT 1")
+    .get() as Parameters<typeof mapConfidentialTransferEvidence>[0] | undefined;
+  return row ? mapConfidentialTransferEvidence(row) : null;
 };
 
 export const insertRepaymentLeaf = (

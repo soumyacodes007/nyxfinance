@@ -15,7 +15,9 @@ const EVENT_NAMES = new Set([
   "RepaymentHistoryRootSet",
   "RepaymentHistoryVerified",
   "DisclosureGrantCreated",
-  "DisclosureGrantRevoked"
+  "DisclosureGrantRevoked",
+  "transfer",
+  "spender_transfer"
 ]);
 
 type RpcEvent = {
@@ -35,6 +37,7 @@ type RpcEvent = {
 const trackedContracts = (config: AppConfig): string[] =>
   [
     config.contracts.prefundingCreditLine,
+    config.contracts.confidentialCusdc,
     config.contracts.collateralLock,
     config.contracts.repaymentHistory,
     config.contracts.disclosureGrantRegistry

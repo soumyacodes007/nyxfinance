@@ -6,6 +6,16 @@ import { executeDraw, openCreditLine, repayCreditLine } from "../services/credit
 
 const hex32 = z.string().regex(/^(0x)?[0-9a-fA-F]{64}$/);
 const hexBytes = z.string().regex(/^(0x)?[0-9a-fA-F]+$/);
+const confidentialTransferSchema = z.object({
+  tokenContractId: z.string().min(1).optional(),
+  method: z.enum(["confidential_transfer", "confidential_transfer_from"]).optional(),
+  spender: z.string().min(1).optional(),
+  from: z.string().min(1),
+  to: z.string().min(1),
+  dataXdrBase64: z.string().min(1),
+  auditorPayload: z.record(z.unknown()).optional(),
+  eventPayload: z.record(z.unknown()).optional()
+});
 
 const openCreditSchema = z.object({
   anchorTransactionId: z.string().optional(),
@@ -29,13 +39,15 @@ const drawSchema = z.object({
   anchorTransactionId: z.string().optional(),
   positionId: hex32,
   facility: z.string().min(1),
-  transferCommitment: hex32
+  transferCommitment: hex32,
+  confidentialTransfer: confidentialTransferSchema
 });
 
 const repaySchema = z.object({
   anchorTransactionId: z.string().optional(),
   positionId: hex32,
-  repaymentCommitment: hex32
+  repaymentCommitment: hex32,
+  confidentialTransfer: confidentialTransferSchema.optional()
 });
 
 export const registerCreditLineRoutes = async (

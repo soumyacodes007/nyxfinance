@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { AppConfig } from "../lib/env.js";
 import type { AppDatabase } from "../db/sqlite.js";
+import { listConfidentialTransferEvidence } from "../db/sqlite.js";
 import {
   createDisclosureGrant,
   getDisclosureGrantBundle,
@@ -34,6 +35,12 @@ const createDisclosureSchema = z.object({
   submitOnChain: z.boolean().optional()
 });
 
+const liveAuditorEventsQuery = z.object({
+  positionId: hex32.optional(),
+  anchorTransactionId: z.string().min(1).optional(),
+  limit: z.coerce.number().int().positive().max(100).optional()
+});
+
 export const registerDisclosureRoutes = async (
   app: FastifyInstance,
   config: AppConfig,
@@ -45,6 +52,34 @@ export const registerDisclosureRoutes = async (
     } catch (error) {
       return reply.code(422).send({ error: error instanceof Error ? error.message : String(error) });
     }
+  });
+
+  app.get("/api/auditor/live-events", async (request) => {
+    const query = liveAuditorEventsQuery.parse(request.query);
+    const events = listConfidentialTransferEvidence(db, query).map((event) => ({
+      id: event.id,
+      anchorTransactionId: event.anchorTransactionId,
+      positionId: event.positionId,
+      direction: event.direction,
+      tokenContractId: event.tokenContractId,
+      method: event.method,
+      signer: event.signer,
+      spender: event.spender,
+      from: event.fromAccount,
+      to: event.toAccount,
+      transferCommitment: event.transferCommitment,
+      txHash: event.txHash,
+      ledger: event.ledger,
+      dataXdrSha256: event.dataXdrSha256,
+      auditorPayload: event.auditorPayload,
+      eventPayload: event.eventPayload,
+      createdAt: event.createdAt
+    }));
+    return {
+      plaintextAmountsIncluded: false,
+      decryptClientSide: true,
+      events
+    };
   });
 
   app.get("/api/disclosure/:grantId", async (request, reply) => {

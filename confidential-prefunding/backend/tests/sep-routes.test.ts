@@ -28,6 +28,12 @@ const config = {
   proverPollIntervalMs: 5000,
   ozConfidentialRoot: "./oz-confidential",
   oracleMode: "mock",
+  oracleSource: "demo_adapter",
+  reflectorPulseContractId: "CREFLECTOR",
+  reflectorBaseAsset: "USDC",
+  reflectorQuoteAsset: "USDC",
+  reflectorStalenessSeconds: 900,
+  proverMode: "alpha_demo_prover_worker",
   demoAccounts: {
     alpha: "GALPHA",
     facility: "GFACILITY",
@@ -35,6 +41,8 @@ const config = {
   },
   demoAnchorSecretKey: null,
   participantPolicyOperatorSecretKey: null,
+  creditExecutorSecretKey: null,
+  requireConfidentialRepaymentTransfer: false,
   contracts: {
     participantPolicy: "CPOLICY",
     collateralPolicy: "CCOLLATERAL",
@@ -43,6 +51,7 @@ const config = {
     prefundingCreditLine: "CCREDIT",
     collateralSufficiencyVerifier: "CVERIFY",
     collateralToken: "CTOKEN",
+    confidentialCusdc: "CCUSDC",
     disclosureGrantRegistry: null,
     repaymentHistory: null,
     repaymentHistoryVerifier: null
@@ -95,24 +104,35 @@ test("SEP-31 creates and updates transactions without overwriting product state"
       receiver_id: "GFACILITY",
       amount_in: "1000.00",
       amount_out: "995.00",
-      asset_code: "USDC",
-      status: "pending_stellar"
+      asset_code: "USDC"
     }
   });
   assert.equal(create.statusCode, 200);
-  assert.equal(create.json().status, "pending_stellar");
+  assert.equal(create.json().status, "pending_sender");
   assert.equal(create.json().product_status, "prefunding_required");
 
-  const update = await app.inject({
-    method: "PATCH",
-    url: "/api/sep31/transaction/tx-alpha-1/status",
+  const submitted = await app.inject({
+    method: "POST",
+    url: "/api/sep31/transaction/tx-alpha-1/submit-payment",
     payload: {
-      status: "completed"
+      stellar_transaction_id: "draw-tx"
     }
   });
-  assert.equal(update.statusCode, 200);
-  assert.equal(update.json().status, "completed");
-  assert.equal(update.json().product_status, "closed");
+  assert.equal(submitted.statusCode, 200);
+  assert.equal(submitted.json().status, "pending_stellar");
+  assert.equal(submitted.json().product_status, "prefunding_required");
+  assert.equal(submitted.json().stellar_transaction_id, "draw-tx");
+
+  const completed = await app.inject({
+    method: "POST",
+    url: "/api/sep31/transaction/tx-alpha-1/complete",
+    payload: {
+      settlement_transaction_id: "settle-tx"
+    }
+  });
+  assert.equal(completed.statusCode, 200);
+  assert.equal(completed.json().status, "completed");
+  assert.equal(completed.json().product_status, "prefunding_required");
 
   const get = await app.inject({
     method: "GET",

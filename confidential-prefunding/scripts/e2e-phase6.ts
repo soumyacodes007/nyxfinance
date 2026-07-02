@@ -232,12 +232,22 @@ const friendbotFund = async (friendbotUrl: string, account: string) => {
   }
 };
 
-const createCollateralFixture = (ozRoot: string): CollateralFixture => {
+const createCollateralFixture = (ozRoot: string, oraclePriceE7: string): CollateralFixture => {
   const lockKeyHex = randomBytes(31).toString("hex").padStart(64, "0");
   const positionSecret = BigInt(`0x${randomBytes(16).toString("hex")}`).toString(10);
   const result = runCommand(
     "cargo",
-    ["run", "-q", "-p", "oz-confidential-runner", "--", "collateral-fixture", lockKeyHex, positionSecret],
+    [
+      "run",
+      "-q",
+      "-p",
+      "oz-confidential-runner",
+      "--",
+      "collateral-fixture",
+      lockKeyHex,
+      positionSecret,
+      oraclePriceE7
+    ],
     { cwd: resolve(ozRoot) }
   );
   return JSON.parse(result.stdout) as CollateralFixture;
@@ -309,6 +319,20 @@ const stableJson = (value: unknown): string => {
   return JSON.stringify(value);
 };
 
+const requiredEnv = (name: string): string => {
+  const value = process.env[name];
+  if (!value || value === "REPLACE_ME") {
+    throw new Error(`${name} is required for live confidential token transfer E2E`);
+  }
+  return value;
+};
+
+const optionalJsonEnv = (name: string): Record<string, unknown> | undefined => {
+  const value = process.env[name];
+  if (!value) return undefined;
+  return JSON.parse(value) as Record<string, unknown>;
+};
+
 loadDotEnv();
 const ozRoot = process.env.OZ_CONFIDENTIAL_ROOT ?? "./oz-confidential";
 const phase6Contracts = ensurePhase6Contracts(ozRoot);
@@ -338,15 +362,16 @@ try {
   const proofOfLifeReport = readJson<ProofOfLifeReport>(
     resolve(ozRoot, "state", "proof-of-life-report.json")
   );
-  const collateralFixture = createCollateralFixture(ozRoot);
   const alpha = phase4Report.accounts.alpha;
-  const facility = config.distributionAccount;
+  const facility = config.demoAccounts.facility ?? config.distributionAccount;
   const auditor = proofOfLifeReport.accounts?.auditor ?? phase4Report.accounts.admin;
   const anchorTransactionId = `anchor-phase6-${Date.now()}`;
   const positionId = randomBytes(31).toString("hex").padStart(64, "0");
+  const drawTransferDataXdrBase64 = requiredEnv("DRAW_TRANSFER_DATA_XDR_BASE64");
+  const repaymentTransferDataXdrBase64 = requiredEnv("REPAYMENT_TRANSFER_DATA_XDR_BASE64");
 
   if (!alpha) throw new Error("phase4 report is missing Alpha account");
-  if (!facility || facility === "REPLACE_ME") throw new Error("DISTRIBUTION_ACCOUNT is not configured");
+  if (!facility || facility === "REPLACE_ME") throw new Error("FACILITY_PUBLIC_KEY or DISTRIBUTION_ACCOUNT is not configured");
   if (!auditor) throw new Error("auditor account is not available");
 
   const funding = await Promise.all([
@@ -375,7 +400,7 @@ try {
   await client.post("/api/anchor/transactions", {
     id: anchorTransactionId,
     account: alpha,
-    status: "pending_stellar",
+    status: "pending_sender",
     amount_in: "1000",
     asset_code: "tUSDC"
   });
@@ -401,6 +426,7 @@ try {
     tenorDays: 3
   });
   if (!quote.participantApproved) throw new Error("quote did not read ParticipantPolicy approval");
+  const collateralFixture = createCollateralFixture(ozRoot, quote.oraclePriceE7);
   if (
     quote.oraclePriceE7 !== collateralFixture.oraclePriceE7 ||
     quote.haircutBps !== collateralFixture.haircutBps ||
@@ -477,13 +503,29 @@ try {
     anchorTransactionId,
     positionId,
     facility,
-    transferCommitment: "4444444444444444444444444444444444444444444444444444444444444444"
+    transferCommitment: "4444444444444444444444444444444444444444444444444444444444444444",
+    confidentialTransfer: {
+      tokenContractId: config.contracts.confidentialCusdc,
+      method: "confidential_transfer_from",
+      from: facility,
+      to: alpha,
+      dataXdrBase64: drawTransferDataXdrBase64,
+      auditorPayload: optionalJsonEnv("DRAW_AUDITOR_PAYLOAD_JSON")
+    }
   });
 
   const repay = await client.post("/api/prefunding/repay", {
     anchorTransactionId,
     positionId,
-    repaymentCommitment: "5555555555555555555555555555555555555555555555555555555555555555"
+    repaymentCommitment: "5555555555555555555555555555555555555555555555555555555555555555",
+    confidentialTransfer: {
+      tokenContractId: config.contracts.confidentialCusdc,
+      method: "confidential_transfer",
+      from: alpha,
+      to: facility,
+      dataXdrBase64: repaymentTransferDataXdrBase64,
+      auditorPayload: optionalJsonEnv("REPAYMENT_AUDITOR_PAYLOAD_JSON")
+    }
   });
 
   const repaymentFixture = createRepaymentFixture(ozRoot, positionId);

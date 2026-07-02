@@ -2,7 +2,6 @@ import type { AppDatabase } from "../db/sqlite.js";
 import {
   getAnchorTransactionById,
   parseJson,
-  updateProductStatus,
   updateSepStatus,
   upsertAnchorTransaction
 } from "../db/sqlite.js";
@@ -27,8 +26,6 @@ export type Sep31TransactionInput = {
   quote_id?: string | null;
   fields?: Record<string, unknown>;
 };
-
-const terminalStatuses = new Set<SepStatus>(["completed", "refunded", "expired", "error"]);
 
 const stringOrNull = (value: unknown): string | null => {
   if (typeof value === "string" && value.length > 0) return value;
@@ -70,11 +67,10 @@ export const createSep31Transaction = (
     input.id ?? input.transaction_id ?? input.anchor_transaction_id ?? newId("sep31")
   );
   const account = String(input.account ?? input.from ?? input.sender_id ?? "unknown");
-  const sepStatus = normalizeSepStatus(input.status ?? "pending_stellar");
+  const sepStatus = normalizeSepStatus(input.status ?? "pending_sender");
   const existing = getAnchorTransactionById(db, anchorTransactionId);
   const normalizedProductStatus = normalizeProductStatus(sepStatus);
-  const productStatus: ProductStatus =
-    terminalStatuses.has(sepStatus) ? "closed" : existing?.product_status ?? normalizedProductStatus;
+  const productStatus: ProductStatus = existing?.product_status ?? normalizedProductStatus;
   const raw = {
     protocol: "SEP-31",
     ...input,
@@ -133,9 +129,30 @@ export const updateSep31TransactionStatus = (
     status: sepStatus,
     updated_via: "SEP-31"
   };
-  updateSepStatus(db, id, sepStatus, raw);
-  if (terminalStatuses.has(sepStatus)) {
-    updateProductStatus(db, id, "closed");
-  }
+  const stellarTransactionId =
+    typeof rawUpdate.stellar_transaction_id === "string" ? rawUpdate.stellar_transaction_id : null;
+  updateSepStatus(db, id, sepStatus, raw, stellarTransactionId);
   return getSep31Transaction(config, db, id);
 };
+
+export const markSep31PaymentSubmitted = (
+  config: AppConfig,
+  db: AppDatabase,
+  id: string,
+  rawUpdate: Record<string, unknown> = {}
+) =>
+  updateSep31TransactionStatus(config, db, id, "pending_stellar", {
+    ...rawUpdate,
+    action: "payment_submitted"
+  });
+
+export const markSep31Completed = (
+  config: AppConfig,
+  db: AppDatabase,
+  id: string,
+  rawUpdate: Record<string, unknown> = {}
+) =>
+  updateSep31TransactionStatus(config, db, id, "completed", {
+    ...rawUpdate,
+    action: "settlement_completed"
+  });

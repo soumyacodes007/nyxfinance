@@ -7,7 +7,7 @@ import type { ProductStatus, SepStatus } from "../types/status.js";
 import { syncParticipantPolicy } from "./participant-policy-sync.js";
 
 export const normalizeSepStatus = (value: unknown): SepStatus => {
-  const raw = typeof value === "string" ? value : "pending_stellar";
+  const raw = typeof value === "string" ? value : "pending_sender";
   if (
     raw === "pending_sender" ||
     raw === "pending_stellar" ||
@@ -20,12 +20,11 @@ export const normalizeSepStatus = (value: unknown): SepStatus => {
   ) {
     return raw;
   }
-  return "pending_stellar";
+  return "pending_sender";
 };
 
 export const normalizeProductStatus = (sepStatus: SepStatus): ProductStatus => {
-  if (sepStatus === "completed") return "closed";
-  if (sepStatus === "error" || sepStatus === "expired" || sepStatus === "refunded") return "closed";
+  void sepStatus;
   return "prefunding_required";
 };
 
@@ -38,8 +37,7 @@ export const recordAnchorTransactionCallback = (
   const sepStatus = normalizeSepStatus(body.status);
   const existing = getAnchorTransactionById(db, anchorTransactionId);
   const normalizedProductStatus = normalizeProductStatus(sepStatus);
-  const productStatus =
-    normalizedProductStatus === "closed" ? normalizedProductStatus : existing?.product_status ?? normalizedProductStatus;
+  const productStatus = existing?.product_status ?? normalizedProductStatus;
   upsertAnchorTransaction(db, {
     id: newId("tx"),
     anchorTransactionId,

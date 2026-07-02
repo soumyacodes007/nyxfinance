@@ -5,6 +5,8 @@ import type { AppConfig } from "../lib/env.js";
 import {
   createSep31Transaction,
   getSep31Transaction,
+  markSep31Completed,
+  markSep31PaymentSubmitted,
   updateSep31TransactionStatus
 } from "../services/sep31.js";
 
@@ -66,5 +68,17 @@ export const registerSep31Routes = async (
     const params = z.object({ id: z.string().min(1) }).parse(request.params);
     const body = statusSchema.parse(request.body);
     return updateSep31TransactionStatus(config, db, params.id, body.status, body);
+  });
+
+  app.post(path(prefix, "/transaction/:id/submit-payment"), async (request) => {
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    const body = z.record(z.unknown()).parse(request.body ?? {});
+    return markSep31PaymentSubmitted(config, db, params.id, body);
+  });
+
+  app.post(path(prefix, "/transaction/:id/complete"), async (request) => {
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    const body = z.record(z.unknown()).parse(request.body ?? {});
+    return markSep31Completed(config, db, params.id, body);
   });
 };

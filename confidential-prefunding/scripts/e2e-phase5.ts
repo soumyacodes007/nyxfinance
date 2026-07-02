@@ -60,12 +60,22 @@ const readPhase4Report = (ozRoot: string): { accounts: Record<string, string> } 
   return JSON.parse(readFileSync(reportPath, "utf8")) as { accounts: Record<string, string> };
 };
 
-const createCollateralFixture = (ozRoot: string): CollateralFixture => {
+const createCollateralFixture = (ozRoot: string, oraclePriceE7: string): CollateralFixture => {
   const lockKeyHex = randomBytes(31).toString("hex").padStart(64, "0");
   const positionSecret = BigInt(`0x${randomBytes(16).toString("hex")}`).toString(10);
   const result = spawnSync(
     "cargo",
-    ["run", "-q", "-p", "oz-confidential-runner", "--", "collateral-fixture", lockKeyHex, positionSecret],
+    [
+      "run",
+      "-q",
+      "-p",
+      "oz-confidential-runner",
+      "--",
+      "collateral-fixture",
+      lockKeyHex,
+      positionSecret,
+      oraclePriceE7
+    ],
     {
       cwd: resolve(ozRoot),
       encoding: "utf8"
@@ -113,6 +123,20 @@ const createClient = (baseUrl: string) => {
   return { get, post };
 };
 
+const requiredEnv = (name: string): string => {
+  const value = process.env[name];
+  if (!value || value === "REPLACE_ME") {
+    throw new Error(`${name} is required for live confidential token transfer E2E`);
+  }
+  return value;
+};
+
+const optionalJsonEnv = (name: string): Record<string, unknown> | undefined => {
+  const value = process.env[name];
+  if (!value) return undefined;
+  return JSON.parse(value) as Record<string, unknown>;
+};
+
 const requireSyncedPolicy = (result: Json, label: string): void => {
   const participantPolicy = result.participantPolicy as { synced?: boolean; reason?: string } | undefined;
   if (!participantPolicy?.synced) {
@@ -138,18 +162,18 @@ try {
   const address = app.server.address() as AddressInfo;
   const client = createClient(`http://127.0.0.1:${address.port}`);
   const phase4Report = readPhase4Report(config.ozConfidentialRoot);
-  const fixture = createCollateralFixture(config.ozConfidentialRoot);
   const alpha = phase4Report.accounts.alpha;
-  const facility = config.distributionAccount;
+  const facility = config.demoAccounts.facility ?? config.distributionAccount;
   const anchorTransactionId = `anchor-e2e-${Date.now()}`;
+  const drawTransferDataXdrBase64 = requiredEnv("DRAW_TRANSFER_DATA_XDR_BASE64");
 
   if (!alpha) throw new Error("phase4 report is missing Alpha account");
-  if (!facility || facility === "REPLACE_ME") throw new Error("DISTRIBUTION_ACCOUNT is not configured");
+  if (!facility || facility === "REPLACE_ME") throw new Error("FACILITY_PUBLIC_KEY or DISTRIBUTION_ACCOUNT is not configured");
 
   await client.post("/api/anchor/transactions", {
     id: anchorTransactionId,
     account: alpha,
-    status: "pending_stellar",
+    status: "pending_sender",
     amount_in: "1000",
     asset_code: "tUSDC"
   });
@@ -197,6 +221,7 @@ try {
     tenorDays: 3
   });
   if (!quote.participantApproved) throw new Error("quote did not read ParticipantPolicy approval");
+  const fixture = createCollateralFixture(config.ozConfidentialRoot, quote.oraclePriceE7);
   if (
     quote.oraclePriceE7 !== fixture.oraclePriceE7 ||
     quote.haircutBps !== fixture.haircutBps ||
@@ -283,7 +308,15 @@ try {
     anchorTransactionId,
     positionId,
     facility,
-    transferCommitment: "4444444444444444444444444444444444444444444444444444444444444444"
+    transferCommitment: "4444444444444444444444444444444444444444444444444444444444444444",
+    confidentialTransfer: {
+      tokenContractId: config.contracts.confidentialCusdc,
+      method: "confidential_transfer_from",
+      from: facility,
+      to: alpha,
+      dataXdrBase64: drawTransferDataXdrBase64,
+      auditorPayload: optionalJsonEnv("DRAW_AUDITOR_PAYLOAD_JSON")
+    }
   });
 
   const repay = await client.post("/api/prefunding/repay", {

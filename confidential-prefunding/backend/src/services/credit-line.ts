@@ -9,6 +9,8 @@ import type {
   OpenCreditInput,
   RepayCreditInput
 } from "../types/credit-line.js";
+import { submitAndRecordConfidentialTransfer } from "./confidential-token-transfer.js";
+import { markSep31PaymentSubmitted } from "./sep31.js";
 
 const normalizeHex = (value: string, field: string): string => {
   const hex = value.startsWith("0x") ? value.slice(2) : value;
@@ -80,14 +82,35 @@ export const executeDraw = async (
   input: DrawCreditInput
 ): Promise<CreditLineTxResult> => {
   const operator = getOperator(config);
+  if (input.confidentialTransfer.from !== input.facility) {
+    throw new Error("draw confidentialTransfer.from must match facility");
+  }
+  const confidentialTransfer = await submitAndRecordConfidentialTransfer(config, db, {
+    anchorTransactionId: input.anchorTransactionId,
+    positionId: input.positionId,
+    direction: "draw",
+    transferCommitment: input.transferCommitment,
+    request: input.confidentialTransfer
+  });
   const result = await submitContractCall(config, "execute_draw", [
     bytes32Arg(input.positionId, "positionId"),
     addressArg(input.facility),
     bytes32Arg(input.transferCommitment, "transferCommitment"),
     addressArg(operator.publicKey())
   ]);
-  if (input.anchorTransactionId) updateProductStatus(db, input.anchorTransactionId, "credit_drawn");
-  return result;
+  if (input.anchorTransactionId) {
+    updateProductStatus(db, input.anchorTransactionId, "credit_drawn");
+    markSep31PaymentSubmitted(config, db, input.anchorTransactionId, {
+      stellar_transaction_id: confidentialTransfer.txHash,
+      c_usdc_transfer_tx_hash: confidentialTransfer.txHash,
+      draw_recorded_tx_hash: result.hash
+    });
+  }
+  return {
+    ...result,
+    confidentialTransfer,
+    drawRecorded: result
+  };
 };
 
 export const repayCreditLine = async (
@@ -96,11 +119,27 @@ export const repayCreditLine = async (
   input: RepayCreditInput
 ): Promise<CreditLineTxResult> => {
   const operator = getOperator(config);
+  const confidentialTransfer = input.confidentialTransfer
+    ? await submitAndRecordConfidentialTransfer(config, db, {
+        anchorTransactionId: input.anchorTransactionId,
+        positionId: input.positionId,
+        direction: "repayment",
+        transferCommitment: input.repaymentCommitment,
+        request: input.confidentialTransfer
+      })
+    : null;
+  if (!confidentialTransfer && config.requireConfidentialRepaymentTransfer) {
+    throw new Error("repayment confidential transfer evidence is required");
+  }
   const result = await submitContractCall(config, "repay", [
     bytes32Arg(input.positionId, "positionId"),
     bytes32Arg(input.repaymentCommitment, "repaymentCommitment"),
     addressArg(operator.publicKey())
   ]);
   if (input.anchorTransactionId) updateProductStatus(db, input.anchorTransactionId, "repaid");
-  return result;
+  return {
+    ...result,
+    ...(confidentialTransfer ? { confidentialTransfer } : {}),
+    repaymentRecorded: result
+  };
 };

@@ -93,6 +93,29 @@ CREATE TABLE IF NOT EXISTS contract_events (
 CREATE UNIQUE INDEX IF NOT EXISTS contract_events_unique_idx
 ON contract_events(contract_id, event_name, COALESCE(tx_hash, ''), COALESCE(paging_token, ''));
 
+CREATE TABLE IF NOT EXISTS confidential_transfer_evidence (
+  id TEXT PRIMARY KEY,
+  anchor_transaction_id TEXT,
+  position_id TEXT NOT NULL,
+  direction TEXT NOT NULL,
+  token_contract_id TEXT NOT NULL,
+  method TEXT NOT NULL,
+  signer TEXT NOT NULL,
+  spender TEXT,
+  from_account TEXT NOT NULL,
+  to_account TEXT NOT NULL,
+  transfer_commitment TEXT,
+  tx_hash TEXT NOT NULL,
+  ledger INTEGER,
+  auditor_payload TEXT,
+  event_payload TEXT NOT NULL,
+  data_xdr_sha256 TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS confidential_transfer_evidence_position_idx
+ON confidential_transfer_evidence(position_id, created_at);
+
 CREATE TABLE IF NOT EXISTS repayment_leaves (
   id TEXT PRIMARY KEY,
   position_id TEXT NOT NULL,

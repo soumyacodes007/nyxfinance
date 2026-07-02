@@ -21,16 +21,21 @@ export const operatorKeypair = (config: AppConfig): StellarSdk.Keypair => {
   return StellarSdk.Keypair.fromSecret(config.participantPolicyOperatorSecretKey);
 };
 
-export const submitOperatorContractCall = async (
+export const keypairFromSecret = (secretKey: string | null, envName: string): StellarSdk.Keypair => {
+  if (!secretKey) throw new Error(`${envName} is not configured`);
+  return StellarSdk.Keypair.fromSecret(secretKey);
+};
+
+export const submitContractCallWithKeypair = async (
   config: AppConfig,
+  signer: StellarSdk.Keypair,
   contractId: string,
   method: string,
   args: StellarSdk.xdr.ScVal[]
 ): Promise<OperatorTxResult> =>
   enqueueOperatorTx(async () => {
-    const operator = operatorKeypair(config);
     const rpc = buildRpcServer(config);
-    const source = await rpc.getAccount(operator.publicKey());
+    const source = await rpc.getAccount(signer.publicKey());
     const contract = new StellarSdk.Contract(contractId);
     let tx = new StellarSdk.TransactionBuilder(source, {
       fee: StellarSdk.BASE_FEE,
@@ -45,7 +50,7 @@ export const submitOperatorContractCall = async (
       throw new Error(`${method} simulation failed: ${simulation.error}`);
     }
     tx = StellarSdk.rpc.assembleTransaction(tx, simulation).build();
-    tx.sign(operator);
+    tx.sign(signer);
 
     const sent = await rpc.sendTransaction(tx);
     if (sent.status === "ERROR") {
@@ -63,3 +68,10 @@ export const submitOperatorContractCall = async (
     return { hash: sent.hash, ledger: txResult.ledger };
   });
 
+export const submitOperatorContractCall = async (
+  config: AppConfig,
+  contractId: string,
+  method: string,
+  args: StellarSdk.xdr.ScVal[]
+): Promise<OperatorTxResult> =>
+  submitContractCallWithKeypair(config, operatorKeypair(config), contractId, method, args);

@@ -2,6 +2,7 @@ import type { AppConfig } from "../lib/env.js";
 import type { AppDatabase } from "../db/sqlite.js";
 import {
   getLatestAnchorTransaction,
+  getLatestConfidentialTransferEvidence,
   getLatestDisclosureGrantId,
   getLatestProofJobId,
   getLatestQuoteId
@@ -29,6 +30,7 @@ export const buildLiveSnapshot = async (
       .catch((error) => ({ ok: false as const, error: errorMessage(error) }))
   ]);
   const latestTx = getLatestAnchorTransaction(db);
+  const latestConfidentialTransfer = getLatestConfidentialTransferEvidence(db);
   const watcher = getWatcherState(db);
 
   const snapshot: DemoState = {
@@ -76,19 +78,35 @@ export const buildLiveSnapshot = async (
       latestProductStatus: latestTx?.product_status ?? null,
       latestQuoteId: getLatestQuoteId(db),
       latestProofJobId: getLatestProofJobId(db),
-      latestDisclosureGrantId: getLatestDisclosureGrantId(db)
+      latestDisclosureGrantId: getLatestDisclosureGrantId(db),
+      latestConfidentialTransferTxHash: latestConfidentialTransfer?.txHash ?? null
     },
     dataSources: {
       quote: {
         oracleMode: config.oracleMode,
+        oracleSource: config.oracleSource,
+        reflectorPulseContractId: config.reflectorPulseContractId,
         participantPolicy: sourceStatus(config.contracts.participantPolicy),
         collateralPolicyRegistry: sourceStatus(config.contracts.collateralPolicy),
         oracleAdapter: sourceStatus(config.contracts.oracleAdapter),
         fallbackOrStaticValues: [
+          config.oracleMode !== "reflector" ? `Oracle marked as ${config.oracleSource}` : null,
           !config.contracts.participantPolicy ? "PARTICIPANT_POLICY_CONTRACT_ID missing" : null,
           !config.contracts.collateralPolicy ? "COLLATERAL_POLICY_CONTRACT_ID missing" : null,
-          !config.contracts.oracleAdapter ? "ORACLE_ADAPTER_CONTRACT_ID missing" : null
+          !config.contracts.oracleAdapter ? "ORACLE_ADAPTER_CONTRACT_ID missing" : null,
+          config.oracleMode === "reflector" && !config.reflectorPulseContractId
+            ? "REFLECTOR_PULSE_CONTRACT_ID missing"
+            : null
         ].filter((value): value is string => Boolean(value))
+      },
+      privacy: {
+        proverMode: config.proverMode,
+        privateWitnessBoundary:
+          config.proverMode === "alpha_local" || config.proverMode === "alpha_controlled_service"
+            ? "Alpha-controlled prover; API receives proof artifacts, not private witness values"
+            : "Alpha demo prover-worker; do not claim backend never sees private witness values",
+        backendStoresPlaintextAmounts: false,
+        liveAuditorCiphertextRefs: latestConfidentialTransfer ? "present" : "missing"
       },
       phase6: {
         repaymentHistoryRegistry: sourceStatus(config.contracts.repaymentHistory),
