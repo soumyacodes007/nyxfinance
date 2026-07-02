@@ -3,13 +3,30 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start:api": "node backend/src/index.mjs",
-    "start:business": "node backend/anchor-business-server/src/index.mjs",
-    "start:worker": "node backend/src/worker.mjs",
+    "build": "tsc -p tsconfig.json",
+    "dev:api": "tsx backend/src/index.ts",
+    "dev:business": "tsx backend/anchor-business-server/src/index.ts",
+    "dev:worker": "tsx backend/src/worker.ts",
+    "start:api": "node dist/backend/src/index.js",
+    "start:business": "node dist/backend/anchor-business-server/src/index.js",
+    "start:worker": "node dist/backend/src/worker.js",
     "start:frontend": "node frontend/server.mjs",
     "print:urls": "node scripts/print-urls.mjs",
     "fund:demo-accounts": "node scripts/fund-demo-accounts.mjs",
-    "test": "node --test backend/tests/*.test.mjs"
+    "e2e:phase5": "tsx scripts/e2e-phase5.ts",
+    "e2e:phase6": "tsx scripts/e2e-phase6.ts",
+    "test": "npm run build && node --test dist/backend/tests/*.test.js"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^16.0.1",
+    "better-sqlite3": "^11.10.0",
+    "fastify": "^5.3.3",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.13.14",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
   }
 }
-

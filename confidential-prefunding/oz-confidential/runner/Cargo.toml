@@ -1,0 +1,19 @@
+[package]
+name = "oz-confidential-runner"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+hex = { workspace = true }
+num-bigint = { workspace = true }
+num-traits = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+soroban-sdk = { version = "=26.1.0", features = ["testutils"] }
+soroban-poseidon = { workspace = true }
+stellar-contract-utils = { workspace = true }
+stellar-tokens = { workspace = true }

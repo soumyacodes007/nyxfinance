@@ -1,4 +1,20 @@
-data/*.sqlite
-data/*.sqlite-*
-node_modules/
+.env
+!.env.example
 
+node_modules/
+dist/
+coverage/
+
+data/
+*.sqlite
+*.sqlite-*
+
+oz-confidential/target/
+oz-confidential/state/proof*/
+oz-confidential/state/register-*/
+oz-confidential/state/*.tmp
+oz-confidential/circuits/target/
+oz-confidential/circuits/**/Prover.toml
+
+npm-debug.log*
+.DS_Store

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -x /usr/bin/docker ]; then
+  exec /usr/bin/docker "$@"
+fi
+
+if [ -x /usr/local/bin/docker ]; then
+  exec /usr/local/bin/docker "$@"
+fi
+
+if command -v docker.exe >/dev/null 2>&1; then
+  exec "$(command -v docker.exe)" "$@"
+fi
+
+if [ -x "/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe" ]; then
+  exec "/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe" "$@"
+fi
+
+echo "docker not found" >&2
+exit 127

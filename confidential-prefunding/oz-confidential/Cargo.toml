@@ -1,0 +1,57 @@
+[workspace]
+resolver = "2"
+members = [
+    "contracts/account-policy",
+    "contracts/collateral-lock-registry",
+    "contracts/collateral-policy-registry",
+    "contracts/confidential-auditor",
+    "contracts/confidential-token",
+    "contracts/confidential-verifier",
+    "contracts/collateral-sufficiency-verifier",
+    "contracts/demo-fungible-token",
+    "contracts/oracle-adapter",
+    "contracts/participant-policy",
+    "contracts/prefunding-credit-line",
+    "contracts/repayment-history-registry",
+    "contracts/repayment-history-verifier",
+    "contracts/disclosure-grant-registry",
+    "runner",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+publish = false
+version = "0.1.0"
+
+[workspace.dependencies]
+anyhow = "1.0"
+hex = "0.4"
+num-bigint = "0.4"
+num-traits = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tempfile = "3.10"
+
+soroban-sdk = { version = "=26.1.0", features = ["experimental_spec_shaking_v2"] }
+soroban-poseidon = "=26.0.0"
+
+stellar-access = { git = "https://github.com/OpenZeppelin/stellar-contracts.git", rev = "539968f158e0d779f584de2821090f715a3b25e1", package = "stellar-access" }
+stellar-contract-utils = { git = "https://github.com/OpenZeppelin/stellar-contracts.git", rev = "539968f158e0d779f584de2821090f715a3b25e1", package = "stellar-contract-utils" }
+stellar-macros = { git = "https://github.com/OpenZeppelin/stellar-contracts.git", rev = "539968f158e0d779f584de2821090f715a3b25e1", package = "stellar-macros" }
+stellar-tokens = { git = "https://github.com/OpenZeppelin/stellar-contracts.git", rev = "539968f158e0d779f584de2821090f715a3b25e1", package = "stellar-tokens" }
+ultrahonk_soroban_verifier = { git = "https://github.com/NethermindEth/rs-soroban-ultrahonk", rev = "661db07200f890b1bd9a7349ed787c70a706dd12", default-features = false }
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
+
+[profile.release-with-logs]
+inherits = "release"
+debug-assertions = true

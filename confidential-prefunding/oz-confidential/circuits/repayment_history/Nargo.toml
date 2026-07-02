@@ -1,0 +1,8 @@
+[package]
+name = "circuit_repayment_history"
+type = "bin"
+authors = ["Nyx"]
+compiler_version = ">=0.30.0"
+
+[dependencies]
+stellar_confidential_lib = { path = "../lib" }
