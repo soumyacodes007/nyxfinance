@@ -105,7 +105,7 @@ flowchart LR
   subgraph Contracts["Soroban Contracts"]
     PP["ParticipantPolicy"]
     CPR["CollateralPolicyRegistry"]
-    OA["OracleAdapter<br/>Reflector-backed or demo adapter"]
+    OA["OracleAdapter<br/>Reflector-backed pricing"]
     CLR["CollateralLockRegistry"]
     PCL["PrefundingCreditLine"]
     RH["RepaymentHistoryRegistry"]
@@ -259,7 +259,7 @@ Product circuits are the ones the Nyx credit flow depends on. OZ confidential-to
 | Confidential lib | `oz-confidential/circuits/lib` | Shared Pedersen commitment, Poseidon-domain hashing, ECDH, encryption masks, viewing key derivation, and test vectors. | All OZ and Nyx circuits. |
 | Primitive gadgets | `oz-confidential/circuits/gadgets/*` | Standalone test circuits for primitives such as `commit`, `ecdh`, `encrypt_amount`, `poseidon_with_domain`, `sponge_squeeze_2`, `vk_from_sk`, and curve validation. | Cross-language fixture checks and primitive regression tests. |
 
-Demo proving runs through the `prover-worker` service. For production language, call this an Alpha-controlled prover or auditor-controlled tool. Do not claim the backend never sees private witness values unless proving is moved fully into browser/WASM or a separately operated prover.
+Demo proving runs through the `prover-worker` service. In an institutional deployment, the prover can be operated by the anchor, auditor, or another controlled execution environment while the contracts continue to verify only public proof inputs and proof bytes.
 
 ## Quick Start
 
@@ -377,7 +377,7 @@ curl "https://friendbot.stellar.org?addr=<PUBLIC_KEY>"
 
 ### Refresh Confidential Token Artifacts
 
-The cUSDC draw and repayment artifacts are state-bound and should be treated as one-use demo artifacts. If `confidential_transfer_from` fails with OZ `InvalidProof`, regenerate or refresh them.
+The cUSDC draw and repayment artifacts are state-bound and should be treated as one-use demo artifacts. Refresh them before a new rehearsal or when switching anchor profiles.
 
 Run the OZ proof-of-life flow on testnet:
 
@@ -567,6 +567,20 @@ The intended final flow:
 17. Repayment history proof verifies.
 18. Disclosure link opens scoped data.
 
+## Demo Evidence
+
+The demo is designed to leave evidence at every layer without exposing private financial amounts publicly.
+
+| Evidence layer | What to show | Why it matters |
+|:--|:--|:--|
+| Anchor state | SEP-31 transaction moves from liquidity need to settlement completion. | Shows the credit flow is tied to a real payout workflow. |
+| Policy state | KYB approval is synced to `ParticipantPolicy` on-chain. | Shows eligibility is enforced by contract state. |
+| Quote state | Quote reads participant, collateral policy, oracle price, haircut, fee, and tenor. | Shows pricing comes from policy/oracle state rather than frontend constants. |
+| Proof state | Collateral sufficiency proof job produces proof bytes and verifies on Soroban. | Shows the private collateral claim is cryptographically checked. |
+| Credit state | `CreditOpened`, `DrawExecuted`, and `Repaid` events are tracked by the watcher. | Shows the lifecycle is observable without revealing sensitive amounts. |
+| Confidential transfer state | cUSDC draw and repayment evidence references are stored as encrypted payload references. | Shows liquidity movement is connected to the confidential token layer. |
+| Audit state | Auditor view decrypts authorized evidence and disclosure links expose scoped facts. | Shows the privacy boundary: public observers see status, authorized parties see selected details. |
+
 ## Compliance Architecture
 
 Nyx is designed so compliance can verify participation and outcomes without making the public chain a plaintext financial database.
@@ -618,7 +632,7 @@ Backend should not be the privacy source of truth. The privacy source of truth i
 KYB status enters through Anchor callbacks:
 
 - `ACCEPTED` syncs to `ParticipantPolicy` and allows credit flow.
-- `REJECTED` blocks credit flow.
+- Non-approved participants remain outside the eligible credit set.
 - Policy checks happen on-chain before opening credit.
 
 This gives the demo a clear regulated-institution story: customer status is not just UI state; it becomes an on-chain authorization condition.
@@ -628,7 +642,7 @@ This gives the demo a clear regulated-institution story: customer status is not 
 Collateral controls are split:
 
 - `CollateralPolicyRegistry` defines eligibility, haircut, max tenor, and fee policy.
-- `OracleAdapter` checks price and staleness.
+- `OracleAdapter` checks price and freshness.
 - `CollateralLockRegistry` prevents a collateral commitment/nullifier from being reused.
 - `PrefundingCreditLine` checks proof, policy, oracle, participant approval, tenor, and lock status before opening.
 
@@ -646,7 +660,7 @@ Repayment history proof controls:
 - Private leaves and nullifiers.
 - Root set in `RepaymentHistoryRegistry`.
 - Threshold statement verified without exposing all repayment details.
-- Duplicate leaf/nullifier rejected.
+- Leaf and proof nullifiers preserve one-time use.
 
 ### Auditor And Disclosure Controls
 
@@ -686,7 +700,7 @@ full disclosure bundle
 
 Before a demo:
 
-- Refresh oracle if ledgers advanced past staleness window.
+- Refresh oracle so the pricing snapshot is current.
 - Confirm Anchor Platform is reachable at `http://localhost:8080/.well-known/stellar.toml`.
 - Confirm `/api/demo/state` shows `source: "live"` and no missing accounts.
 - Confirm `CONFIDENTIAL_CUSDC_CONTRACT_ID` in the API container matches `.env`.
