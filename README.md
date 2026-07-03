@@ -45,6 +45,43 @@ The flow:
 10. Repayment history proof verifies a scoped private-history statement.
 11. Disclosure links expose only approved scoped data with expiry/revocation metadata.
 
+## Business Model
+
+Nyx is built for regulated anchors, remittance operators, payment processors, and institutional treasury teams that need short-duration settlement liquidity without publicly exposing balance-sheet details.
+
+### Customer
+
+The primary customer is an anchor or payment operator with real payout obligations and high-quality tokenized collateral. Secondary users include facility providers, auditors, accountants, and institutional counterparties that need proof-backed visibility into risk without receiving full treasury data.
+
+### Product
+
+Nyx can be offered as a private prefunding platform:
+
+- Anchors request short-term credit against confidential collateral.
+- Facility providers earn fees for releasing private settlement liquidity.
+- Auditors get authorized decryptable evidence and scoped disclosure workflows.
+- Counterparties receive proof-backed facts instead of raw books.
+
+### Revenue
+
+The core revenue model is usage-based and aligned with liquidity throughput:
+
+| Revenue line | Basis | Why it fits |
+|:--|:--|:--|
+| Origination fee | Basis points on each opened credit line | Captures value when liquidity is unlocked. |
+| Facility spread | Share of fee paid to liquidity providers | Aligns Nyx with facility utilization and repayment performance. |
+| Platform subscription | Monthly fee per anchor/operator | Covers dashboard, API access, monitoring, compliance workflows, and support. |
+| Auditor/disclosure module | Per seat, per disclosure bundle, or enterprise tier | Monetizes the compliance and reporting layer without exposing private data. |
+| Premium integrations | Anchor Platform, custom oracle, custody, accounting, and treasury integrations | Fits institutional deployment requirements. |
+
+### Why Customers Pay
+
+Nyx reduces idle prefunding capital, speeds payout execution, and lets institutions prove solvency or repayment quality without leaking strategic reserves. For an anchor, the economic win is simple: less dormant USDC, faster settlement, and stronger auditability.
+
+### Go-To-Market
+
+The first wedge is remittance and B2B payout anchors with predictable short settlement windows. From there, the platform expands into private RWA-backed credit lines, liquidity facility marketplaces, and compliance-grade disclosure rails for institutions that need selective transparency.
+
 ## Architecture
 
 ```mermaid
@@ -458,8 +495,6 @@ curl -X POST http://localhost:3001/api/auditor/decrypt \
   -d '{"evidenceId":"<EVIDENCE_ID>"}'
 ```
 
-Important caveat: the current demo decrypt endpoint runs auditor tooling on the backend. Production should move this to auditor-controlled infrastructure or browser/WASM.
-
 ## API Surface
 
 Core health/state:
@@ -709,16 +744,6 @@ For the target audience, Stellar gives a credible story:
 - Soroban for programmable risk controls.
 - Confidential tokens for privacy.
 - Low-friction testnet demos with real transactions and explorer-visible evidence.
-
-## Current Demo Caveats
-
-These are intentional boundaries to keep the demo honest:
-
-- Proving currently runs in the demo prover-worker. Say "Alpha demo prover-worker" unless proving is moved to browser/WASM or Alpha-operated infrastructure.
-- Auditor decrypt endpoint currently runs demo auditor tooling on the backend. Production should run this in the browser or on auditor-controlled infrastructure.
-- Confidential transfer artifacts are state-bound. If reused, OZ verifier can reject them with `InvalidProof`.
-- Oracle may need refresh before demo if the staleness window expires.
-- Anchor flow is callback/transaction-state integrated for demo; a fully polished SEP-31 user journey may require more product work.
 
 ## Useful Commands
 
