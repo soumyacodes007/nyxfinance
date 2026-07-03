@@ -164,6 +164,29 @@ This separation matters. `pending_stellar` means the anchor payout is waiting on
 - `RepaymentHistoryRegistry`: stores private repayment leaf/root metadata and verifies repayment-history proof claims.
 - `DisclosureGrantRegistry`: thin grant registry for scope, expiry, revocation, and auditability. It does not store plaintext.
 
+### Deployed Testnet Contracts
+
+These are the current Stellar testnet contract IDs used by the demo configuration and checked-in deployment reports.
+
+| Area | Contract | Testnet contract ID | Role |
+|:--|:--|:--|:--|
+| Credit policy | `ParticipantPolicy` | `CB22UEWEYK5AFLSBTOHVIE6Z6EPKWDAWMMI4LWKFZDRQ3MZKD67INZMM` | Stores KYB/participant approval synced from Anchor callbacks. |
+| Credit policy | `CollateralPolicyRegistry` | `CAPJG5B2JK2B5TR3KYLZLQM7VMAFW6LPJCEOOY3XYDMAAS7LQVBGVBW3` | Stores eligible collateral, haircut, fee, tenor, and oracle freshness policy. |
+| Credit policy | `OracleAdapter` | `CDBP2MXQ5YXPFNGOEYWFV6VLRSZKND7ICKYKPGWOHHBOAHZX4X2JS55K` | Exposes price and freshness checks; can be refreshed from Reflector where configured. |
+| Credit policy | Reflector pulse | `CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63` | External testnet oracle source used by the refresh path. |
+| Credit state | `CollateralLockRegistry` | `CBMCCRQSVQSJE5UF55UC3PIFXWMQIDWM3CI57F3ZONEH5NR4AH7CIARG` | Prevents reuse of the same confidential collateral lock/nullifier. |
+| Credit state | `PrefundingCreditLine` | `CBAC66ZAVCDSWLE22O4T72I5D4Y3DWQ7GD7ASMJCCDI63HALHDWHXFH7` | Opens credit, records draw, repayment, events, and lock release. |
+| Verifier | `CollateralSufficiencyVerifier` | `CC3AV2YVDQGZBHPCILAUGEAAS5QF5QJYOV4NN2OSXVZCLIYAMKBLCDUS` | Verifies the Noir collateral sufficiency proof before credit opens. |
+| Verifier | `RepaymentHistoryVerifier` | `CC45VHO7QOQXVMGIQ3NF2EITMIIIAOHXPYAP5GE2CG7NJIVJ6KLPOA3U` | Verifies the Noir repayment history proof. |
+| History | `RepaymentHistoryRegistry` | `CBEMKJIIWQ4HNDDD5Z6SJMQTGUJ6PKBBKT2M7FGT3GMAFRDM2WXX6LSA` | Stores private repayment leaves/root metadata and proof nullifiers. |
+| Disclosure | `DisclosureGrantRegistry` | `CDLW3K347Y2KIJL6YIILSGSQDRBZGKNCDPBCNBLS5A34RDUC3OWX34ZQ` | Stores scoped disclosure grant hash, viewer hash, expiry, and revocation metadata. |
+| Confidential token | `cUSDC` | `CDE7R6Y7ZNNV4RDBK7BPL33KRX2JJFQ6NHS4FTTHM6P3J6MFX4LAIJRD` | OZ confidential liquidity token used for private draw/repayment artifacts. |
+| Collateral asset | Active collateral token | `CD7XXR3JSLW7RQ3BL32LXHWJRXFKINAMGHKRKHE7N4F7TWEGV67CG64K` | Current configured collateral asset for the credit path. |
+| OZ proof-of-life | `ConfidentialAuditor` | `CCFYKPBKHG2RH64WJSLD2LMBY5GUX3L6MFUY7NTJIM67Y7HQVPELNSTA` | Registry/source for auditor encryption keys and decryptable transfer payloads. |
+| OZ proof-of-life | `ConfidentialVerifier` | `CCPPSSTYM4VKRMNC23IDJHJKDGTLIDKJTARRCXT6B7DOKFXIKHGFRZ7Q` | Registry for confidential token verifier contracts/artifacts. |
+| OZ proof-of-life | `cTBill` | `CB2WSEQ4TIXEV2EQDIIAPMSBOS5YLTQ63RMMFLLSLWFJHVXXDAHQKG5H` | Confidential treasury-bill wrapper proven in the OZ token proof-of-life path. |
+| OZ proof-of-life | `cXAUm` | `CART6L62LMACC4UTUHC7TTUVBJ2PQU26KQL6N4XJPIY2H7PMMQTEP6VE` | Confidential gold wrapper deployed for reference/proof-of-life, not central to prefunding. |
+
 ### Confidential Token Layer
 
 Nyx uses the OpenZeppelin Confidential Token design as the privacy source of truth:
@@ -181,6 +204,23 @@ Nyx currently has two proof families:
 
 - Collateral sufficiency: proves private collateral covers requested draw after haircut.
 - Repayment history: proves a private repayment-history property, such as at least a threshold number of on-time repayments, without exposing amounts or counterparties.
+
+### Circuit Map
+
+Product circuits are the ones the Nyx credit flow depends on. OZ confidential-token circuits are the lower-level private token operations used to prove token privacy mechanics. Helper circuits are test harnesses for shared primitives and cross-language consistency.
+
+| Circuit | Path | What it proves or computes | Used by |
+|:--|:--|:--|:--|
+| Collateral sufficiency | `oz-confidential/circuits/collateral_sufficiency` | The hidden collateral commitment opens to enough value to cover the hidden credit amount after oracle price and haircut; also binds tenor, lock key, and position nullifier. | `PrefundingCreditLine.open` through `CollateralSufficiencyVerifier`. |
+| Repayment history | `oz-confidential/circuits/repayment_history` | A fixed private set of three repayment leaves matches a public history root and has at least the public threshold of on-time positive repayments without revealing amounts, dates, or which leaf was late. | `RepaymentHistoryRegistry.verify_history` through `RepaymentHistoryVerifier`. |
+| Register | `oz-confidential/circuits/register` | The account owns a spending secret key and derives the registered spending public key and viewing public key for a specific confidential token contract. | OZ confidential account registration. |
+| Transfer | `oz-confidential/circuits/transfer` | A sender owns and opens its spendable balance, subtracts the private transfer amount, creates a recipient transfer commitment, and emits recipient/sender auditor ciphertexts. | Direct confidential transfer. |
+| Set spender | `oz-confidential/circuits/set_spender` | The owner escrows a private allowance for a spender, updates owner spendable balance, and emits encrypted allowance/auditor payloads. | Confidential allowance creation for delegated transfer. |
+| Spender transfer | `oz-confidential/circuits/spender_transfer` | A spender owns its key, opens an existing allowance, transfers a private amount to a recipient, and updates the remaining allowance commitment. | `confidential_transfer_from` style delegated transfer. |
+| Revoke spender | `oz-confidential/circuits/revoke_spender` | The owner opens an allowance commitment and folds the remaining allowance back into spendable balance while emitting owner-auditor ciphertext. | Allowance revocation/reclaim. |
+| Withdraw | `oz-confidential/circuits/withdraw` | The owner opens spendable balance, subtracts a public withdrawal amount, and emits encrypted balance/auditor checkpoint data. | Confidential-to-public withdrawal flow. |
+| Confidential lib | `oz-confidential/circuits/lib` | Shared Pedersen commitment, Poseidon-domain hashing, ECDH, encryption masks, viewing key derivation, and test vectors. | All OZ and Nyx circuits. |
+| Primitive gadgets | `oz-confidential/circuits/gadgets/*` | Standalone test circuits for primitives such as `commit`, `ecdh`, `encrypt_amount`, `poseidon_with_domain`, `sponge_squeeze_2`, `vk_from_sk`, and curve validation. | Cross-language fixture checks and primitive regression tests. |
 
 Demo proving runs through the `prover-worker` service. For production language, call this an Alpha-controlled prover or auditor-controlled tool. Do not claim the backend never sees private witness values unless proving is moved fully into browser/WASM or a separately operated prover.
 
