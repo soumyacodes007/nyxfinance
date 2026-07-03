@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use soroban_poseidon::{poseidon2_hash, Field as PoseidonField, Poseidon2Config, Poseidon2Sponge};
 use soroban_sdk::{
     crypto::bn254::Bn254Fr,
-    xdr::ToXdr,
+    xdr::{FromXdr, ToXdr},
     Bytes, BytesN, Env, U256,
 };
 use stellar_contract_utils::crypto::grumpkin::{Grumpkin, Point};
@@ -21,6 +21,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::{Command, Output},
+    panic::{catch_unwind, take_hook, set_hook, AssertUnwindSafe},
     str,
     thread,
     time::Duration,
@@ -3615,6 +3616,7 @@ impl TransferArtifacts {
     fn event_snapshot(&self) -> Value {
         json!({
             "r_e": hex::encode(point_to_bytes(&self.r_e_point)),
+            "sigma": field_to_hex(&self.sigma),
             "v_aud_r": self.v_aud_r.to_str_radix(16),
             "r_aud_r": self.r_aud_r.to_str_radix(16),
             "v_aud_s": self.v_aud_s.to_str_radix(16),
@@ -3641,6 +3643,7 @@ impl SpenderTransferArtifacts {
     fn event_snapshot(&self) -> Value {
         json!({
             "r_e": hex::encode(point_to_bytes(&self.r_e_point)),
+            "sigma_a": field_to_hex(&self.sigma),
             "v_aud_r": self.v_aud_r.to_str_radix(16),
             "r_aud_r": self.r_aud_r.to_str_radix(16),
             "v_aud_s": self.v_aud_s.to_str_radix(16),
@@ -3753,6 +3756,139 @@ fn field_to_bytes32(v: &BigUint) -> [u8; 32] {
 
 fn field_to_hex(v: &BigUint) -> String {
     hex::encode(field_to_bytes32(v))
+}
+
+fn parse_field_hex(value: &str, name: &str) -> Result<BigUint> {
+    BigUint::parse_bytes(value.trim_start_matches("0x").as_bytes(), 16)
+        .ok_or_else(|| anyhow!("invalid {name} hex"))
+}
+
+fn parse_scalar(value: &str, name: &str) -> Result<BigUint> {
+    let trimmed = value.trim_start_matches("0x");
+    if value.starts_with("0x")
+        || trimmed.len() == 64
+        || value.chars().any(|ch| ch.is_ascii_hexdigit() && ch.is_ascii_alphabetic())
+    {
+        parse_field_hex(value, name)
+    } else {
+        BigUint::parse_bytes(value.as_bytes(), 10)
+            .ok_or_else(|| anyhow!("invalid {name} decimal"))
+    }
+}
+
+fn parse_point_hex(env: &Env, value: &str, name: &str) -> Result<Point> {
+    let bytes = hex::decode(value.trim_start_matches("0x"))
+        .with_context(|| format!("invalid {name} hex"))?;
+    if bytes.len() != 64 {
+        bail!("{name} must be 64 bytes");
+    }
+    let mut arr = [0u8; 64];
+    arr.copy_from_slice(&bytes);
+    Ok(BytesN::from_array(env, &arr))
+}
+
+fn print_auditor_decrypt(
+    env: &Env,
+    r_e_hex: &str,
+    v_aud_r_hex: &str,
+    sigma_value: &str,
+    secret_value: Option<&str>,
+    r_aud_r_hex: Option<&str>,
+    v_aud_s_hex: Option<&str>,
+    b_aud_s_hex: Option<&str>,
+) -> Result<()> {
+    let r_e_point = parse_point_hex(env, r_e_hex, "r_e")?;
+    let v_aud_r = parse_field_hex(v_aud_r_hex, "v_aud_r")?;
+    let sigma = parse_scalar(sigma_value, "sigma")?;
+    let auditor_secret = match secret_value {
+        Some(value) => parse_scalar(value, "auditor_secret")?,
+        None => BigUint::from(55u32),
+    };
+    let shared = ecdh_x(env, &r_e_point, &auditor_secret);
+    let (recipient_mask0, recipient_mask1) =
+        sponge_squeeze_2(env, DOMAIN_AUDITOR_RECIPIENT, &shared, &sigma);
+    let decrypted_amount = field_sub(&v_aud_r, &recipient_mask0);
+
+    let mut output = json!({
+        "decryptor_mode": "auditor_tooling_demo_cohosted",
+        "decrypted_amount": decrypted_amount.to_string(),
+        "decrypted_amount_hex": field_to_hex(&decrypted_amount),
+        "shared_secret_x_hex": field_to_hex(&shared),
+    });
+
+    if let Some(r_aud_r_value) = r_aud_r_hex {
+        let randomness = field_sub(&parse_field_hex(r_aud_r_value, "r_aud_r")?, &recipient_mask1);
+        output["decrypted_randomness_hex"] = json!(field_to_hex(&randomness));
+    }
+
+    if let Some(v_aud_s_value) = v_aud_s_hex {
+        let (sender_mask0, sender_mask1) =
+            sponge_squeeze_2(env, DOMAIN_AUDITOR_SENDER, &shared, &sigma);
+        let sender_amount = field_sub(&parse_field_hex(v_aud_s_value, "v_aud_s")?, &sender_mask0);
+        output["decrypted_sender_amount"] = json!(sender_amount.to_string());
+        output["decrypted_sender_amount_hex"] = json!(field_to_hex(&sender_amount));
+        if let Some(b_aud_s_value) = b_aud_s_hex {
+            let sender_balance = field_sub(&parse_field_hex(b_aud_s_value, "b_aud_s")?, &sender_mask1);
+            output["decrypted_sender_balance"] = json!(sender_balance.to_string());
+            output["decrypted_sender_balance_hex"] = json!(field_to_hex(&sender_balance));
+        }
+    }
+
+    println!("{}", serde_json::to_string_pretty(&output)?);
+    Ok(())
+}
+
+fn print_transfer_xdr_inspection(env: &Env, data_xdr_base64: &str) -> Result<()> {
+    let data = BASE64
+        .decode(data_xdr_base64)
+        .context("invalid transfer data base64")?;
+    let bytes = Bytes::from_slice(env, &data);
+
+    let previous_hook = take_hook();
+    set_hook(Box::new(|_| {}));
+    let transfer_probe = catch_unwind(AssertUnwindSafe(|| TransferData::from_xdr(env, &bytes)));
+    set_hook(previous_hook);
+
+    if let Ok(Ok(decoded)) = transfer_probe {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "kind": "confidential_transfer",
+                "r_e": hex::encode(point_to_bytes(&decoded.payload.r_e)),
+                "sigma": field_to_hex(&bytesn_to_big(&decoded.payload.sigma)),
+                "v_aud_r": field_to_hex(&bytesn_to_big(&decoded.payload.v_aud_r)),
+                "r_aud_r": field_to_hex(&bytesn_to_big(&decoded.payload.r_aud_r)),
+                "v_aud_s": field_to_hex(&bytesn_to_big(&decoded.payload.v_aud_s)),
+                "b_aud_s": field_to_hex(&bytesn_to_big(&decoded.payload.b_aud_s)),
+            }))?
+        );
+        return Ok(());
+    }
+
+    let previous_hook = take_hook();
+    set_hook(Box::new(|_| {}));
+    let spender_transfer_probe =
+        catch_unwind(AssertUnwindSafe(|| SpenderTransferData::from_xdr(env, &bytes)));
+    set_hook(previous_hook);
+
+    if let Ok(Ok(decoded)) = spender_transfer_probe {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "kind": "confidential_transfer_from",
+                "r_e": hex::encode(point_to_bytes(&decoded.payload.r_e)),
+                "sigma_a_new": field_to_hex(&bytesn_to_big(&decoded.payload.sigma_a_new)),
+                "v_aud_r": field_to_hex(&bytesn_to_big(&decoded.payload.v_aud_r)),
+                "r_aud_r": field_to_hex(&bytesn_to_big(&decoded.payload.r_aud_r)),
+                "v_aud_s": field_to_hex(&bytesn_to_big(&decoded.payload.v_aud_s)),
+                "a_aud_s": field_to_hex(&bytesn_to_big(&decoded.payload.a_aud_s)),
+                "requires_emitted_sigma_a": true,
+            }))?
+        );
+        return Ok(());
+    }
+
+    bail!("data XDR is neither TransferData nor SpenderTransferData")
 }
 
 fn field_bytes_from_u128(value: u128) -> [u8; 32] {
@@ -4030,9 +4166,32 @@ fn main() -> Result<()> {
             let proof_secret = env::args().nth(3).context("missing proof secret decimal")?;
             runner.print_repayment_history_fixture(&position_id, &proof_secret)
         }
+        "decrypt-auditor" => {
+            let r_e = env::args().nth(2).context("missing r_e hex")?;
+            let v_aud_r = env::args().nth(3).context("missing v_aud_r hex")?;
+            let sigma = env::args().nth(4).context("missing sigma")?;
+            let secret = env::args().nth(5);
+            let r_aud_r = env::args().nth(6);
+            let v_aud_s = env::args().nth(7);
+            let b_aud_s = env::args().nth(8);
+            print_auditor_decrypt(
+                &runner.env,
+                &r_e,
+                &v_aud_r,
+                &sigma,
+                secret.as_deref(),
+                r_aud_r.as_deref(),
+                v_aud_s.as_deref(),
+                b_aud_s.as_deref(),
+            )
+        }
+        "inspect-transfer-xdr" => {
+            let data_xdr_base64 = env::args().nth(2).context("missing data XDR base64")?;
+            print_transfer_xdr_inspection(&runner.env, &data_xdr_base64)
+        }
         _ => {
             eprintln!(
-                "usage: cargo run -p oz-confidential-runner -- <prove-of-life|phase3-local|phase3-testnet|phase4-local|phase4-testnet|phase6-local-deploy|phase6-testnet-deploy|collateral-fixture LOCK_KEY POSITION_SECRET [ORACLE_PRICE_E7]|repayment-history-fixture>"
+                "usage: cargo run -p oz-confidential-runner -- <prove-of-life|phase3-local|phase3-testnet|phase4-local|phase4-testnet|phase6-local-deploy|phase6-testnet-deploy|collateral-fixture LOCK_KEY POSITION_SECRET [ORACLE_PRICE_E7]|repayment-history-fixture POSITION_ID PROOF_SECRET|decrypt-auditor R_E_HEX V_AUD_R_HEX SIGMA [SECRET] [R_AUD_R_HEX] [V_AUD_S_HEX] [B_AUD_S_HEX]|inspect-transfer-xdr DATA_XDR_BASE64>"
             );
             std::process::exit(1);
         }

@@ -26,6 +26,27 @@ export const keypairFromSecret = (secretKey: string | null, envName: string): St
   return StellarSdk.Keypair.fromSecret(secretKey);
 };
 
+const contractErrorLabels: Record<string, string> = {
+  "3506": "OZ ConfidentialToken InvalidProof",
+  "4504": "PrefundingCreditLine StaleOraclePrice",
+  "4505": "PrefundingCreditLine ProofNotApproved",
+  "4511": "PrefundingCreditLine ProofVerificationFailed",
+  "4702": "RepaymentHistory DuplicateProofNullifier",
+  "4704": "RepaymentHistory ProofVerificationFailed"
+};
+
+const summarizeSimulationError = (method: string, error: string): string => {
+  const contractError = error.match(/Error\(Contract,\s*#(\d+)\)/);
+  const verifierFalse = /verify_proof\], data:false/.test(error) || /verify_proof.*data:false/s.test(error);
+  const code = contractError?.[1];
+  const label = code ? contractErrorLabels[code] ?? `Contract error #${code}` : "simulation error";
+  const proofHint =
+    code === "3506" && verifierFalse
+      ? " The configured confidential transfer proof was rejected by the OZ verifier; refresh the draw/repayment proof-of-life artifacts before retrying."
+      : "";
+  return `${method} simulation failed: ${label}.${proofHint}`;
+};
+
 export const submitContractCallWithKeypair = async (
   config: AppConfig,
   signer: StellarSdk.Keypair,
@@ -47,7 +68,7 @@ export const submitContractCallWithKeypair = async (
 
     const simulation = await rpc.simulateTransaction(tx);
     if (StellarSdk.rpc.Api.isSimulationError(simulation)) {
-      throw new Error(`${method} simulation failed: ${simulation.error}`);
+      throw new Error(summarizeSimulationError(method, simulation.error));
     }
     tx = StellarSdk.rpc.assembleTransaction(tx, simulation).build();
     tx.sign(signer);

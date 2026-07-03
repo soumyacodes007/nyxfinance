@@ -71,6 +71,7 @@ export const registerDisclosureRoutes = async (
       txHash: event.txHash,
       ledger: event.ledger,
       dataXdrSha256: event.dataXdrSha256,
+      dataXdrBase64Available: Boolean(event.dataXdrBase64),
       auditorPayload: event.auditorPayload,
       eventPayload: event.eventPayload,
       createdAt: event.createdAt

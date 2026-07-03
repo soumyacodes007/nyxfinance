@@ -2,8 +2,10 @@ import Fastify from "fastify";
 import type { AppConfig } from "./lib/env.js";
 import type { AppDatabase } from "./db/sqlite.js";
 import { registerAnchorCallbackRoutes } from "./routes/anchor-callbacks.js";
+import { registerAuditorRoutes } from "./routes/auditor.js";
 import { registerCreditLineRoutes } from "./routes/credit-line.js";
 import { registerDemoStateRoutes } from "./routes/demo-state.js";
+import { registerDemoFlowRoutes } from "./routes/demo-flow.js";
 import { registerDisclosureRoutes } from "./routes/disclosure.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerOracleRoutes } from "./routes/oracle.js";
@@ -33,6 +35,8 @@ export const buildApi = async (config: AppConfig, db: AppDatabase) => {
 
   await registerHealthRoutes(app, config);
   await registerDemoStateRoutes(app, config, db);
+  await registerDemoFlowRoutes(app, config, db);
+  await registerAuditorRoutes(app, config, db);
   await registerAnchorCallbackRoutes(app, config, db);
   await registerSep12Routes(app, config, db);
   await registerSep31Routes(app, config, db);

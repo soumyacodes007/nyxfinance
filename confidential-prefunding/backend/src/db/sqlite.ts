@@ -244,7 +244,18 @@ export const updateProductStatus = (
 export const getLatestAnchorTransaction = (db: AppDatabase) => {
   const row = db
     .prepare(`
-      SELECT anchor_transaction_id, sep_status, product_status, updated_at
+      SELECT
+        anchor_transaction_id,
+        stellar_transaction_id,
+        account,
+        sep_status,
+        product_status,
+        amount_in,
+        amount_out,
+        asset_code,
+        raw,
+        created_at,
+        updated_at
       FROM anchor_transactions
       ORDER BY updated_at DESC
       LIMIT 1
@@ -252,8 +263,15 @@ export const getLatestAnchorTransaction = (db: AppDatabase) => {
     .get() as
     | {
         anchor_transaction_id: string;
+        stellar_transaction_id: string | null;
+        account: string;
         sep_status: SepStatus;
         product_status: ProductStatus;
+        amount_in: string | null;
+        amount_out: string | null;
+        asset_code: string | null;
+        raw: string;
+        created_at: string;
         updated_at: string;
       }
     | undefined;
@@ -293,6 +311,53 @@ export const getLatestQuoteId = (db: AppDatabase): string | null => {
     | { id: string }
     | undefined;
   return row?.id ?? null;
+};
+
+const mapQuoteRow = (row: {
+  id: string;
+  anchor_transaction_id: string | null;
+  account: string;
+  collateral_token: string;
+  requested_credit_amount: string;
+  tenor_days: number;
+  oracle_price_e7: string;
+  oracle_updated_ledger: number | null;
+  haircut_bps: number;
+  max_tenor_days: number;
+  fee_bps: number;
+  fee_amount: string;
+  expires_at: string;
+  source: "chain";
+}): PrefundingQuote => ({
+  id: row.id,
+  anchorTransactionId: row.anchor_transaction_id,
+  account: row.account,
+  collateralToken: row.collateral_token,
+  requestedCreditAmount: row.requested_credit_amount,
+  tenorDays: row.tenor_days,
+  participantApproved: true,
+  oraclePriceE7: row.oracle_price_e7,
+  oracleUpdatedLedger: row.oracle_updated_ledger,
+  haircutBps: row.haircut_bps,
+  maxTenorDays: row.max_tenor_days,
+  feeBps: row.fee_bps,
+  feeAmount: row.fee_amount,
+  expiresAt: row.expires_at,
+  source: row.source
+});
+
+export const getQuoteById = (db: AppDatabase, id: string): PrefundingQuote | null => {
+  const row = db.prepare("SELECT * FROM quotes WHERE id = ?").get(id) as
+    | Parameters<typeof mapQuoteRow>[0]
+    | undefined;
+  return row ? mapQuoteRow(row) : null;
+};
+
+export const getLatestQuote = (db: AppDatabase): PrefundingQuote | null => {
+  const row = db.prepare("SELECT * FROM quotes ORDER BY created_at DESC LIMIT 1").get() as
+    | Parameters<typeof mapQuoteRow>[0]
+    | undefined;
+  return row ? mapQuoteRow(row) : null;
 };
 
 export const insertProofJob = (
@@ -427,6 +492,7 @@ export type ConfidentialTransferEvidence = {
   auditorPayload: Record<string, unknown> | null;
   eventPayload: Record<string, unknown>;
   dataXdrSha256: string;
+  dataXdrBase64: string | null;
   createdAt: string;
 };
 
@@ -447,6 +513,7 @@ const mapConfidentialTransferEvidence = (row: {
   auditor_payload: string | null;
   event_payload: string;
   data_xdr_sha256: string;
+  data_xdr_base64: string | null;
   created_at: string;
 }): ConfidentialTransferEvidence => ({
   id: row.id,
@@ -465,6 +532,7 @@ const mapConfidentialTransferEvidence = (row: {
   auditorPayload: row.auditor_payload ? parseJson<Record<string, unknown>>(row.auditor_payload) : null,
   eventPayload: parseJson<Record<string, unknown>>(row.event_payload),
   dataXdrSha256: row.data_xdr_sha256,
+  dataXdrBase64: row.data_xdr_base64,
   createdAt: row.created_at
 });
 
@@ -476,8 +544,8 @@ export const insertConfidentialTransferEvidence = (
     INSERT INTO confidential_transfer_evidence
       (id, anchor_transaction_id, position_id, direction, token_contract_id, method, signer,
        spender, from_account, to_account, transfer_commitment, tx_hash, ledger, auditor_payload,
-       event_payload, data_xdr_sha256, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       event_payload, data_xdr_sha256, data_xdr_base64, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     evidence.id,
     evidence.anchorTransactionId,
@@ -495,8 +563,43 @@ export const insertConfidentialTransferEvidence = (
     evidence.auditorPayload ? JSON.stringify(evidence.auditorPayload) : null,
     JSON.stringify(evidence.eventPayload),
     evidence.dataXdrSha256,
+    evidence.dataXdrBase64,
     nowIso()
   );
+};
+
+export const getConfidentialTransferEvidenceById = (
+  db: AppDatabase,
+  id: string
+): ConfidentialTransferEvidence | null => {
+  const row = db
+    .prepare("SELECT * FROM confidential_transfer_evidence WHERE id = ?")
+    .get(id) as Parameters<typeof mapConfidentialTransferEvidence>[0] | undefined;
+  return row ? mapConfidentialTransferEvidence(row) : null;
+};
+
+export const updateConfidentialTransferEvidence = (
+  db: AppDatabase,
+  id: string,
+  patch: {
+    auditorPayload?: Record<string, unknown> | null;
+    eventPayload?: Record<string, unknown>;
+    dataXdrBase64?: string | null;
+  }
+): ConfidentialTransferEvidence | null => {
+  const current = getConfidentialTransferEvidenceById(db, id);
+  if (!current) return null;
+  const auditorPayload =
+    patch.auditorPayload !== undefined ? patch.auditorPayload : current.auditorPayload;
+  const eventPayload = patch.eventPayload ?? current.eventPayload;
+  const dataXdrBase64 =
+    patch.dataXdrBase64 !== undefined ? patch.dataXdrBase64 : current.dataXdrBase64;
+  db.prepare(`
+    UPDATE confidential_transfer_evidence
+    SET auditor_payload = ?, event_payload = ?, data_xdr_base64 = ?
+    WHERE id = ?
+  `).run(auditorPayload ? JSON.stringify(auditorPayload) : null, JSON.stringify(eventPayload), dataXdrBase64, id);
+  return getConfidentialTransferEvidenceById(db, id);
 };
 
 export const listConfidentialTransferEvidence = (

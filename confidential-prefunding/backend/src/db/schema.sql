@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS confidential_transfer_evidence (
   auditor_payload TEXT,
   event_payload TEXT NOT NULL,
   data_xdr_sha256 TEXT NOT NULL,
+  data_xdr_base64 TEXT,
   created_at TEXT NOT NULL
 );
 

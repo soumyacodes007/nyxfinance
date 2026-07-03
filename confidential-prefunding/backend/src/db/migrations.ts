@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS confidential_transfer_evidence (
   auditor_payload TEXT,
   event_payload TEXT NOT NULL,
   data_xdr_sha256 TEXT NOT NULL,
+  data_xdr_base64 TEXT,
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS confidential_transfer_evidence_position_idx
@@ -154,6 +155,7 @@ export const runMigrations = (db: Database.Database): void => {
   addColumnIfMissing(db, "proof_jobs", "result", "TEXT");
   addColumnIfMissing(db, "proof_jobs", "error", "TEXT");
   addColumnIfMissing(db, "proof_jobs", "attempts", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "confidential_transfer_evidence", "data_xdr_base64", "TEXT");
 };
 
 const addColumnIfMissing = (

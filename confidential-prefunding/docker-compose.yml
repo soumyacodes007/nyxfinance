@@ -134,9 +134,13 @@ services:
     build:
       context: .
       dockerfile: infra/docker/node-service.Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:${API_PORT}
     env_file:
       - ./.env
-    command: ["node", "frontend/server.mjs"]
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:${API_PORT}
+    command: ["npm", "run", "start:frontend"]
     ports:
       - "${FRONTEND_PORT}:3000"
     depends_on:

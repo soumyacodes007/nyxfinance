@@ -1,7 +1,10 @@
 .git
 .env
 node_modules
+frontend/node_modules
 dist
+frontend/.next
+frontend/out
 coverage
 data
 *.sqlite

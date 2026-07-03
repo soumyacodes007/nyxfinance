@@ -36,6 +36,7 @@ export type ConfidentialTransferResult = {
   txHash: string;
   ledger?: number;
   dataXdrSha256: string;
+  dataXdrBase64?: string;
   auditorPayloadRef: "live_ciphertext" | "not_provided";
 };
 

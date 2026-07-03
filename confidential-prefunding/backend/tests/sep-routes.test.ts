@@ -144,3 +144,97 @@ test("SEP-31 creates and updates transactions without overwriting product state"
   await app.close();
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("demo-flow exposes UI state and refuses to fake draw before open", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prefunding-demo-flow-"));
+  const db = openAppDatabase(join(dir, "app.sqlite"));
+  const app = await buildApi(config, db);
+
+  const state = await app.inject({
+    method: "GET",
+    url: "/api/demo-flow/state"
+  });
+  assert.equal(state.statusCode, 200);
+  assert.equal(state.json().state.positionId, null);
+  assert.equal(state.json().state.historyProof, null);
+  assert.equal(typeof state.json().artifactStatus.drawTransferDataXdrConfigured, "boolean");
+
+  const draw = await app.inject({
+    method: "POST",
+    url: "/api/demo-flow/draw",
+    payload: {}
+  });
+  assert.equal(draw.statusCode, 422);
+  assert.match(draw.json().error, /No opened demo position/);
+
+  const historyProof = await app.inject({
+    method: "POST",
+    url: "/api/demo-flow/history-proof",
+    payload: {}
+  });
+  assert.equal(historyProof.statusCode, 422);
+  assert.match(historyProof.json().error, /No opened demo position/);
+
+  await app.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("demo-flow bootstrap seeds default SEP-31 and SEP-12 state", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prefunding-demo-bootstrap-"));
+  const db = openAppDatabase(join(dir, "app.sqlite"));
+  const app = await buildApi(config, db);
+
+  const bootstrap = await app.inject({
+    method: "POST",
+    url: "/api/demo-flow/bootstrap",
+    payload: {
+      anchorTransactionId: "sep31-alpha-001",
+      account: "GALPHA",
+      kybStatus: "ACCEPTED"
+    }
+  });
+  assert.equal(bootstrap.statusCode, 200);
+  assert.equal(bootstrap.json().transaction.id, "sep31-alpha-001");
+  assert.equal(bootstrap.json().transaction.status, "pending_sender");
+  assert.equal(bootstrap.json().customer.status, "ACCEPTED");
+  assert.equal(bootstrap.json().demoReady.sep31Seeded, true);
+
+  const tx = await app.inject({
+    method: "GET",
+    url: "/api/sep31/transaction?id=sep31-alpha-001"
+  });
+  assert.equal(tx.statusCode, 200);
+  assert.equal(tx.json().status, "pending_sender");
+  assert.equal(tx.json().product_status, "prefunding_required");
+
+  const customer = await app.inject({
+    method: "GET",
+    url: "/api/sep12/customer?account=GALPHA&type=sep31-sender"
+  });
+  assert.equal(customer.statusCode, 200);
+  assert.equal(customer.json().status, "ACCEPTED");
+
+  await app.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("auditor decrypt endpoint validates ciphertext payload before running tooling", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prefunding-auditor-decrypt-"));
+  const db = openAppDatabase(join(dir, "app.sqlite"));
+  const app = await buildApi(config, db);
+
+  const missing = await app.inject({
+    method: "POST",
+    url: "/api/auditor/decrypt",
+    payload: {
+      auditorPayload: {
+        r_e: "00"
+      }
+    }
+  });
+  assert.equal(missing.statusCode, 422);
+  assert.match(missing.json().error, /missing v_aud_r/);
+
+  await app.close();
+  rmSync(dir, { recursive: true, force: true });
+});

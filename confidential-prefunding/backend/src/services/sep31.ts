@@ -33,11 +33,17 @@ const stringOrNull = (value: unknown): string | null => {
   return null;
 };
 
+const recordOrEmpty = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+
 const buildMoreInfoUrl = (config: AppConfig, id: string) =>
   `${config.anchorPlatformPublicUrl.replace(/\/$/, "")}/sep31/transaction/${encodeURIComponent(id)}`;
 
 const mapRow = (config: AppConfig, row: NonNullable<ReturnType<typeof getAnchorTransactionById>>) => {
   const raw = parseJson<Record<string, unknown>>(row.raw);
+  const fields = recordOrEmpty(raw.fields);
+  const corridor = stringOrNull(fields.corridor ?? raw.corridor);
+  const settlementWindowDays = stringOrNull(fields.settlement_window_days ?? raw.settlement_window_days);
   return {
     id: row.anchor_transaction_id,
     transaction_id: row.anchor_transaction_id,
@@ -52,6 +58,9 @@ const mapRow = (config: AppConfig, row: NonNullable<ReturnType<typeof getAnchorT
     sender_id: raw.sender_id ?? row.account,
     receiver_id: raw.receiver_id ?? null,
     quote_id: raw.quote_id ?? null,
+    fields,
+    corridor,
+    settlement_window_days: settlementWindowDays ? Number(settlementWindowDays) : null,
     started_at: row.created_at,
     updated_at: row.updated_at,
     refunds: raw.refunds ?? null

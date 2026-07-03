@@ -34,6 +34,19 @@ export type DemoState = {
   product: {
     latestSepStatus: SepStatus | null;
     latestProductStatus: ProductStatus | null;
+    latestSep31Transaction: {
+      id: string;
+      status: SepStatus;
+      productStatus: ProductStatus;
+      amountIn: string | null;
+      amountOut: string | null;
+      assetCode: string | null;
+      senderId: string;
+      account: string;
+      stellarTransactionId: string | null;
+      startedAt: string;
+      updatedAt: string;
+    } | null;
     latestQuoteId: string | null;
     latestProofJobId: string | null;
     latestDisclosureGrantId: string | null;

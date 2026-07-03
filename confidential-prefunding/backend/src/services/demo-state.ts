@@ -76,6 +76,21 @@ export const buildLiveSnapshot = async (
     product: {
       latestSepStatus: latestTx?.sep_status ?? null,
       latestProductStatus: latestTx?.product_status ?? null,
+      latestSep31Transaction: latestTx
+        ? {
+            id: latestTx.anchor_transaction_id,
+            status: latestTx.sep_status,
+            productStatus: latestTx.product_status,
+            amountIn: latestTx.amount_in,
+            amountOut: latestTx.amount_out,
+            assetCode: latestTx.asset_code,
+            senderId: latestTx.account,
+            account: latestTx.account,
+            stellarTransactionId: latestTx.stellar_transaction_id,
+            startedAt: latestTx.created_at,
+            updatedAt: latestTx.updated_at
+          }
+        : null,
       latestQuoteId: getLatestQuoteId(db),
       latestProofJobId: getLatestProofJobId(db),
       latestDisclosureGrantId: getLatestDisclosureGrantId(db),
