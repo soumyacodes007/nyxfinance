@@ -1,5 +1,5 @@
 [package]
-name = "nyx-repayment-history-registry"
+name = "nyx-blend-facility"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true

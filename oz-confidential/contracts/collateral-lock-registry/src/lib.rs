@@ -5,8 +5,15 @@ use soroban_sdk::{
     BytesN, Env, Symbol, Vec,
 };
 use stellar_access::access_control::{self as access_control, AccessControl};
+use stellar_contract_utils::upgradeable;
+use stellar_macros::{only_admin, only_role};
 
 const MANAGER_ROLE: Symbol = symbol_short!("manager");
+const LEDGERS_PER_DAY: u32 = 17_280;
+// Locks must outlive the maximum tenor (5 days) with generous headroom so the
+// replay/reuse guard is never archived while a position is live.
+const LOCK_TTL_THRESHOLD: u32 = LEDGERS_PER_DAY * 7;
+const LOCK_TTL_EXTEND_TO: u32 = LEDGERS_PER_DAY * 60;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -42,6 +49,14 @@ impl CollateralLockRegistryContract {
         access_control::grant_role_no_auth(e, &manager, &MANAGER_ROLE, &admin);
     }
 
+    /// Admin-gated WASM upgrade. Keep the admin behind a timelocked multisig.
+    #[only_admin]
+    pub fn upgrade(e: &Env, new_wasm_hash: BytesN<32>) {
+        upgradeable::upgrade(e, &new_wasm_hash);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[only_role(operator, "manager")]
     pub fn lock(
         e: &Env,
         lock_key: BytesN<32>,
@@ -49,13 +64,14 @@ impl CollateralLockRegistryContract {
         collateral_token: Address,
         position_id: BytesN<32>,
         expiry_ledger: u32,
-        _operator: Address,
+        operator: Address,
     ) {
         if Self::is_locked(e, lock_key.clone()) {
             panic_with_error!(e, CollateralLockError::AlreadyLocked);
         }
+        let key = StorageKey::Lock(lock_key);
         e.storage().persistent().set(
-            &StorageKey::Lock(lock_key),
+            &key,
             &CollateralLock {
                 active: true,
                 owner,
@@ -64,9 +80,15 @@ impl CollateralLockRegistryContract {
                 expiry_ledger,
             },
         );
+        // Keep the lock (replay/collateral-reuse guard) alive for the full
+        // credit lifecycle; without this the entry could be archived and evicted.
+        e.storage()
+            .persistent()
+            .extend_ttl(&key, LOCK_TTL_THRESHOLD, LOCK_TTL_EXTEND_TO);
     }
 
-    pub fn release(e: &Env, lock_key: BytesN<32>, _operator: Address) {
+    #[only_role(operator, "manager")]
+    pub fn release(e: &Env, lock_key: BytesN<32>, operator: Address) {
         let mut lock = Self::get_lock(e, lock_key.clone());
         lock.active = false;
         e.storage().persistent().set(&StorageKey::Lock(lock_key), &lock);

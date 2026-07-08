@@ -1,0 +1,49 @@
+name: ci
+
+# Gates the trust-critical layers: Soroban contracts must compile for wasm and
+# pass their tests; the Noir product circuits must pass their soundness tests
+# (valid proof accepted, forged/insufficient/wrong-owner proofs rejected).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: oz-confidential
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: oz-confidential
+      - name: Check (workspace)
+        run: cargo check --workspace --locked
+      - name: Test (workspace)
+        run: cargo test --workspace --locked
+      - name: Build wasm (release)
+        run: cargo build --workspace --release --target wasm32-unknown-unknown
+
+  circuits:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: oz-confidential/circuits
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Noir (nargo, pinned)
+        run: |
+          curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
+          echo "$HOME/.nargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.nargo/bin/noirup" --version 1.0.0-beta.11
+      - name: nargo version
+        run: nargo --version
+      - name: Circuit tests (soundness)
+        run: nargo test

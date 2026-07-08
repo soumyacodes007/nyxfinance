@@ -1037,11 +1037,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "nyx-blend-facility"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
+ "stellar-access",
+ "stellar-contract-utils",
+ "stellar-macros",
+]
+
+[[package]]
 name = "nyx-collateral-lock-registry"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk",
  "stellar-access",
+ "stellar-contract-utils",
  "stellar-macros",
 ]
 
@@ -1117,6 +1128,7 @@ version = "0.1.0"
 dependencies = [
  "soroban-sdk",
  "stellar-access",
+ "stellar-contract-utils",
  "stellar-macros",
 ]
 
@@ -1135,6 +1147,7 @@ version = "0.1.0"
 dependencies = [
  "soroban-sdk",
  "stellar-access",
+ "stellar-contract-utils",
  "stellar-macros",
 ]
 
@@ -1144,6 +1157,7 @@ version = "0.1.0"
 dependencies = [
  "soroban-sdk",
  "stellar-access",
+ "stellar-contract-utils",
  "stellar-macros",
 ]
 

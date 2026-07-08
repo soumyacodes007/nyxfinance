@@ -1,5 +1,7 @@
 use stellar_confidential_lib::poseidon_with_domain;
 
+mod tests;
+
 global DOMAIN_REPAYMENT_LEAF: Field = 40;
 global DOMAIN_REPAYMENT_ROOT: Field = 41;
 global DOMAIN_REPAYMENT_PROOF_NULLIFIER: Field = 42;
