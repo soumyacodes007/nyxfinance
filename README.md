@@ -372,6 +372,8 @@ Nyx currently has two proof families:
 
 Product circuits are the ones the Nyx credit flow depends on. OZ confidential-token circuits are the lower-level private token operations used to prove token privacy mechanics. Helper circuits are test harnesses for shared primitives and cross-language consistency.
 
+Full contract and circuit testing guide: [docs/contract-circuit-testing-guide.md](docs/contract-circuit-testing-guide.md)
+
 | Circuit | Path | What it proves or computes | Used by |
 |:--|:--|:--|:--|
 | Collateral sufficiency | `oz-confidential/circuits/collateral_sufficiency` | The hidden collateral commitment opens to enough value to cover the hidden credit amount after oracle price and haircut; also binds tenor, lock key, and position nullifier. | `PrefundingCreditLine.open` through `CollateralSufficiencyVerifier`. |
@@ -387,82 +389,16 @@ Product circuits are the ones the Nyx credit flow depends on. OZ confidential-to
 
 Demo proving runs through the `prover-worker` service as Alpha's proving environment. The same proof interface can be operated by the anchor, auditor, or another controlled execution environment while the contracts continue to verify only public proof inputs and proof bytes.
 
-## Quick Start
+## Run Locally
 
-### Prerequisites
-
-- Docker Desktop with WSL integration enabled.
-- Node.js 20 or 22 for host-side scripts.
-- Rust toolchain if running `oz-confidential` locally.
-- Stellar CLI available inside the Docker image or local runner path.
-- Testnet accounts and secrets in `.env`.
-
-### Environment
-
-Start from the example:
+The repo includes Docker services for the API, worker, frontend, Anchor Platform, and local state.
 
 ```bash
 cp .env.example .env
-```
-
-Important values:
-
-```txt
-STELLAR_RPC_URL=https://soroban-testnet.stellar.org
-STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
-STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
-ANCHOR_PLATFORM_PUBLIC_URL=http://localhost:8080
-ANCHOR_PLATFORM_URL=http://localhost:8080
-API_PORT=3001
-FRONTEND_PORT=3000
-```
-
-For Docker containers, Compose overrides internal Anchor URLs to container hostnames. For host-side runs, use:
-
-```txt
-ANCHOR_PLATFORM_URL=http://localhost:8080
-ANCHOR_STELLAR_TOML_URL=http://localhost:8080/.well-known/stellar.toml
-```
-
-Required operator secrets for the full demo:
-
-```txt
-PARTICIPANT_POLICY_OPERATOR_SECRET_KEY=...
-CREDIT_EXECUTOR_SECRET_KEY=...
-DEMO_ANCHOR_SECRET_KEY=...
-```
-
-Required public display/config accounts:
-
-```txt
-ALPHA_PUBLIC_KEY=...
-FACILITY_PUBLIC_KEY=...
-AUDITOR_PUBLIC_KEY=...
-CREDIT_EXECUTOR_PUBLIC_KEY=...
-```
-
-Required deployed contract IDs:
-
-```txt
-PARTICIPANT_POLICY_CONTRACT_ID=...
-COLLATERAL_POLICY_CONTRACT_ID=...
-ORACLE_ADAPTER_CONTRACT_ID=...
-COLLATERAL_LOCK_CONTRACT_ID=...
-PREFUNDING_CREDIT_LINE_CONTRACT_ID=...
-COLLATERAL_SUFFICIENCY_VERIFIER_CONTRACT_ID=...
-COLLATERAL_TOKEN_CONTRACT_ID=...
-CONFIDENTIAL_CUSDC_CONTRACT_ID=...
-REPAYMENT_HISTORY_CONTRACT_ID=...
-REPAYMENT_HISTORY_VERIFIER_CONTRACT_ID=...
-```
-
-### Start The Stack
-
-```bash
 docker compose up -d --build
 ```
 
-Check services:
+Core checks:
 
 ```bash
 curl http://localhost:3001/health
@@ -470,227 +406,81 @@ curl http://localhost:3001/api/demo/state
 curl http://localhost:8080/.well-known/stellar.toml
 ```
 
-Important URLs:
+Important local URLs:
 
 ```txt
-Frontend:              http://localhost:3000
-API health:            http://localhost:3001/health
-Demo state:            http://localhost:3001/api/demo/state
-Demo flow state:       http://localhost:3001/api/demo-flow/state
-Anchor stellar.toml:   http://localhost:8080/.well-known/stellar.toml
-Anchor Platform API:   http://localhost:8085
-Business server:       http://localhost:8091/health
+Frontend:            http://localhost:3000
+API:                 http://localhost:3001
+Anchor Platform:     http://localhost:8080
+Demo state:          http://localhost:3001/api/demo/state
+Demo flow state:     http://localhost:3001/api/demo-flow/state
 ```
 
-If `.env` changes after containers are already created, recreate the API containers. `docker compose restart` is not enough because it does not reload Compose env values.
+If `.env` changes, recreate the API and prover containers so Compose reloads environment values:
 
 ```bash
 docker compose up -d --force-recreate --no-deps api prover-worker
 ```
 
-### Fund Demo Accounts
+## Testing
 
-```bash
-npm run fund:demo-accounts
-```
+Contract and circuit testing is documented here:
 
-Or fund manually with Friendbot for each public key:
+[docs/contract-circuit-testing-guide.md](docs/contract-circuit-testing-guide.md)
 
-```bash
-curl "https://friendbot.stellar.org?addr=<PUBLIC_KEY>"
-```
-
-### Refresh Confidential Token Artifacts
-
-The cUSDC draw and repayment artifacts are state-bound and should be treated as one-use demo artifacts. Refresh them before a new rehearsal or when switching anchor profiles.
-
-Run the OZ proof-of-life flow on testnet:
+Quick validation:
 
 ```bash
 cd oz-confidential
-NYX_RUNNER_NETWORK=testnet cargo run -q -p oz-confidential-runner -- prove-of-life
-cd ..
+cargo test --workspace
+
+cd circuits
+nargo test --workspace
+nargo compile --workspace
 ```
 
-Import the generated cUSDC/draw/repay artifacts into `.env`:
+Latest local validation:
 
-```bash
-npm run refresh:confidential-artifacts
-docker compose up -d --force-recreate --no-deps api prover-worker
-```
-
-### Seed The Demo SEP-31 Transaction
-
-On a fresh SQLite DB, seed the opening transaction:
-
-```bash
-curl -X POST http://localhost:3001/api/sep31/transactions \
-  -H "content-type: application/json" \
-  -d '{
-    "id": "sep31-alpha-001",
-    "account": "<ALPHA_PUBLIC_KEY>",
-    "status": "pending_sender",
-    "amount_in": "50000",
-    "asset_code": "cUSDC",
-    "fields": {
-      "corridor": "USD-PHP",
-      "settlement_window_days": 3
-    }
-  }'
-```
-
-Accept KYB and sync ParticipantPolicy:
-
-```bash
-curl -X POST http://localhost:3001/api/anchor/customer/status \
-  -H "content-type: application/json" \
-  -d '{
-    "account": "<ALPHA_PUBLIC_KEY>",
-    "status": "ACCEPTED"
-  }'
-```
-
-### Manual Demo Flow
-
-Run these serially. Do not parallelize; one operator account signs many transactions.
-
-```bash
-curl -X POST http://localhost:3001/api/prefunding/quote \
-  -H "content-type: application/json" \
-  -d '{
-    "anchorTransactionId": "sep31-alpha-001",
-    "account": "<ALPHA_PUBLIC_KEY>",
-    "requestedCreditAmount": "50000",
-    "tenorDays": 3
-  }'
-```
-
-Open credit with the real collateral sufficiency proof:
-
-```bash
-curl -X POST http://localhost:3001/api/demo-flow/open \
-  -H "content-type: application/json" \
-  -d '{}'
-```
-
-Draw cUSDC privately:
-
-```bash
-curl -X POST http://localhost:3001/api/demo-flow/draw \
-  -H "content-type: application/json" \
-  -d '{}'
-```
-
-Repay and complete settlement:
-
-```bash
-curl -X POST http://localhost:3001/api/demo-flow/repay \
-  -H "content-type: application/json" \
-  -d '{}'
-```
-
-Generate and verify repayment history proof:
-
-```bash
-curl -X POST http://localhost:3001/api/demo-flow/history-proof \
-  -H "content-type: application/json" \
-  -d '{}'
-```
-
-Inspect final state:
-
-```bash
-curl http://localhost:3001/api/demo-flow/state
-curl http://localhost:3001/api/demo/state
-```
-
-### Auditor Evidence
-
-List live encrypted transfer evidence:
-
-```bash
-curl "http://localhost:3001/api/auditor/live-events?positionId=<POSITION_ID>"
-```
-
-Decrypt a stored evidence row with demo auditor tooling:
-
-```bash
-curl -X POST http://localhost:3001/api/auditor/decrypt \
-  -H "content-type: application/json" \
-  -d '{"evidenceId":"<EVIDENCE_ID>"}'
+```txt
+cargo test --workspace: passed
+nargo test --workspace: passed
+nargo compile --workspace: passed
 ```
 
 ## API Surface
 
-Core health/state:
+Core product APIs:
 
 ```txt
 GET  /health
 GET  /api/demo/state
 GET  /api/demo-flow/state
-```
-
-Anchor and KYB:
-
-```txt
-POST /api/sep31/transactions
-GET  /api/sep31/transaction?id=...
-POST /api/sep31/transaction/:id/pending-stellar
-POST /api/sep31/transaction/:id/completed
 POST /api/anchor/customer/status
-```
-
-Prefunding:
-
-```txt
+POST /api/sep31/transactions
 POST /api/prefunding/quote
 POST /api/demo-flow/open
 POST /api/demo-flow/draw
 POST /api/demo-flow/repay
 POST /api/demo-flow/history-proof
-```
-
-Proof jobs:
-
-```txt
-POST /api/proof/collateral-sufficiency
-POST /api/proof/repayment-history
-GET  /api/proof/:jobId
-```
-
-Watcher and audit:
-
-```txt
-POST /api/watcher/sync
 GET  /api/auditor/live-events
 POST /api/auditor/decrypt
-POST /api/disclosure/grants
-GET  /api/disclosure/:grantId
-POST /api/disclosure/:grantId/revoke
 ```
 
-## Demo Script Summary
+These APIs are orchestration infrastructure around the contract layer: SEP/KYB state, quotes, proof jobs, watcher state, and auditor evidence.
 
-The intended final flow:
+## Demo Flow Summary
 
-1. Start Docker stack.
-2. Fund Alpha, Facility, Auditor.
-3. Anchor Platform creates or backend seeds payout transaction.
-4. Alpha KYB accepted.
-5. ParticipantPolicy approval tx confirms.
-6. Alpha has cTBill collateral.
-7. Facility has cUSDC liquidity.
-8. Alpha/Facility confidential-token setup creates spender allowance.
-9. Quote is generated from policy/oracle state.
-10. Collateral sufficiency proof is generated.
-11. `PrefundingCreditLine` verifies the proof.
-12. CreditExecutor releases private cUSDC.
-13. Public view shows hidden active position.
-14. Auditor decrypts live draw evidence.
-15. Alpha repays.
-16. Lock releases.
-17. Repayment history proof verifies.
-18. Disclosure link opens scoped data.
+The intended demo flow is intentionally simple:
+
+1. Anchor payout need enters through SEP-31 state.
+2. KYB approval syncs to `ParticipantPolicy`.
+3. Quote reads policy and oracle state.
+4. Collateral sufficiency proof is generated.
+5. `PrefundingCreditLine` verifies the proof and opens credit.
+6. cUSDC draw and repayment happen through confidential-token evidence.
+7. Public view shows status only.
+8. Auditor view decrypts authorized evidence.
+9. Repayment history proof verifies private borrower reputation.
 
 ## Demo Evidence
 
