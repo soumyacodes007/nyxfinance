@@ -1,19 +1,32 @@
 # Nyx Confidential Prefunding
 
-Nyx is a private prefunding credit system for institutional Stellar anchors. It lets an anchor use confidential tokenized collateral to unlock short-term stablecoin liquidity for a real payout need, without revealing reserve size, draw amount, repayment amount, or credit capacity to the public.
+[![Watch the Demo](https://img.shields.io/badge/Watch%20Demo-YouTube-red?style=for-the-badge&logo=youtube)](https://www.youtube.com/watch?v=-wNmBygVal8&t=1s)
 
-Demo video: https://www.youtube.com/watch?v=-wNmBygVal8&t=1s
+## What Is Nyx
 
-The demo target is a two-browser institutional story:
+Nyx is a private prefunding credit layer for Stellar anchors.
 
-- Left browser: Alpha Remit, the anchor operator requesting private prefunding.
-- Right browser: public observer first, then authorized auditor.
+It lets an anchor unlock short-term stablecoin liquidity against tokenized collateral, without publicly revealing reserve size, draw amount, repayment amount, or credit capacity.
 
-The strongest demo moment is simple: the public sees that a compliant credit position exists, but amounts stay hidden; then an authorized auditor loads credentials and decrypts the full draw and repayment trail.
+Nyx is contract-first. The core trust layer lives in Soroban contracts and Noir circuits: participant policy, collateral policy, oracle checks, collateral locks, credit lifecycle, confidential token transfers, and proof verification.
+
+The TypeScript backend is not the source of financial truth. It provides compliance and orchestration infrastructure around the contracts: SEP-12/KYB callbacks, SEP-31 transaction state, quote coordination, proof-job orchestration, watcher indexing, snapshot caching, and auditor/disclosure APIs.
+
+This means the backend is configurable per anchor/operator, while the core credit and privacy guarantees stay enforced by contracts and verifier circuits.
+
+The dashboard and hosted backend in this repo are the demo and integration surface. The product is the embedded credit API plus contract/circuit protocol that can be configured for different anchors, because every anchor has different compliance, KYB, payout, treasury, and reporting requirements.
 
 ## The Problem
 
-Cross-border anchors often need prefunded liquidity before a payout can complete. The usual choices are bad:
+Stellar is strong for cross-border payments because of anchors. But even when the blockchain leg is fast, anchors still face slow bank settlement, local payout timing, and liquidity gaps.
+
+To make payouts feel instant, an anchor often has to prefund wallets, payout partners, or settlement accounts before final settlement arrives. That locks capital in advance just to cover timing risk.
+
+This is not a theoretical problem. Arf validated the market with real numbers: [Circle's Arf case study](https://www.circle.com/case-studies/arf) reports **$1.4B+ cumulative USDC-based liquidity volume in Arf's first year** and **50x annual capital turnover**. [Stellar's Arf case study](https://stellar.org/case-studies/arf) reports **$830M+ in USDC loans over 20 months**, powered by a **$16M facility**, with **$1.6B+ total on-chain USDC volume** and no defaults or late repayments reported in that case study.
+
+But the current model is still paperwork-heavy and trust-based. To get credit, an anchor may need to expose reserves, collateral, liquidity needs, and counterparty flow to a lender or auditor. For an institutional payment company, that leaks competitive information and can reveal treasury stress.
+
+The usual choices are bad:
 
 - Keep idle USDC in corridors, which is capital-inefficient.
 - Borrow externally and expose treasury stress or reserve size.
@@ -38,7 +51,7 @@ The flow:
 1. Anchor Platform creates or ingests a SEP-31 payout transaction.
 2. Alpha KYB status is synced to `ParticipantPolicy` on-chain.
 3. The backend quotes private prefunding from real policy/oracle contract state.
-4. Alpha generates a collateral sufficiency proof.
+4. Alpha's proving environment generates a collateral sufficiency proof.
 5. `PrefundingCreditLine.open` verifies the Noir proof on Soroban.
 6. Facility releases cUSDC through an OZ confidential token transfer.
 7. Public state shows an active/repaid position, but not amounts.
@@ -57,32 +70,52 @@ The primary customer is an anchor or payment operator with real payout obligatio
 
 ### Product
 
-Nyx can be offered as a private prefunding platform:
+Nyx is offered as embedded private prefunding infrastructure:
 
 - Anchors request short-term credit against confidential collateral.
-- Facility providers earn fees for releasing private settlement liquidity.
+- Facility providers supply liquidity into the credit flow.
 - Auditors get authorized decryptable evidence and scoped disclosure workflows.
 - Counterparties receive proof-backed facts instead of raw books.
+- Operators integrate Nyx through configurable APIs instead of rebuilding contract, proof, compliance, and watcher infrastructure for every corridor.
+
+### Supply Side: Blend Integration
+
+Nyx separates the borrower privacy layer from the liquidity supply layer.
+
+The anchor's private collateral protects the Nyx credit line, while Blend can provide wholesale USDC liquidity to the facility side. This means Nyx does not need to be the lender itself; it can route credit demand into an existing on-chain liquidity market.
+
+In the Blend-backed model:
+
+1. A facility account supplies public collateral into Blend.
+2. Blend lends USDC to that facility account against visible pool collateral.
+3. Nyx wraps or routes that liquidity into confidential cUSDC.
+4. The anchor receives private short-term prefunding after its ZK collateral proof verifies.
+5. When the anchor repays, the facility can repay or rebalance its Blend position.
+
+This creates two clean risk layers:
+
+| Layer | Collateral | Visibility | Purpose |
+|:--|:--|:--|:--|
+| Blend facility layer | Public Blend collateral | Public | Sources wholesale USDC liquidity. |
+| Nyx anchor layer | Confidential tokenized RWA collateral | Private with ZK proof | Underwrites the anchor without exposing reserves. |
+
+The mainnet `BlendFacility` adapter is deployed and points at Blend's live pool and USDC asset. This shows Nyx can plug into Stellar-native liquidity instead of relying only on a static demo treasury.
 
 ### Revenue
 
-The core revenue model is usage-based and aligned with liquidity throughput:
+Nyx monetizes the embedded infrastructure layer. The clean revenue line is an API/protocol fee charged to anchors or operators when they use Nyx to quote, prove, open, draw, repay, and audit private prefunding credit.
 
 | Revenue line | Basis | Why it fits |
 |:--|:--|:--|
-| Origination fee | Basis points on each opened credit line | Captures value when liquidity is unlocked. |
-| Facility spread | Share of fee paid to liquidity providers | Aligns Nyx with facility utilization and repayment performance. |
-| Platform subscription | Monthly fee per anchor/operator | Covers dashboard, API access, monitoring, compliance workflows, and support. |
-| Auditor/disclosure module | Per seat, per disclosure bundle, or enterprise tier | Monetizes the compliance and reporting layer without exposing private data. |
-| Premium integrations | Anchor Platform, custom oracle, custody, accounting, and treasury integrations | Fits institutional deployment requirements. |
+| Embedded API fee | Per successful prefunding workflow, or basis points on opened credit volume | Directly tied to the infrastructure Nyx provides: SEP/KYB orchestration, quotes, proof jobs, contract execution, watcher state, and auditor/disclosure APIs. |
 
 ### Why Customers Pay
 
-Nyx reduces idle prefunding capital, speeds payout execution, and lets institutions prove solvency or repayment quality without leaking strategic reserves. For an anchor, the economic win is simple: less dormant USDC, faster settlement, and stronger auditability.
+Nyx reduces idle prefunding capital, speeds payout execution, and lets institutions prove solvency or repayment quality without leaking strategic reserves. For an anchor, the economic win is simple: less dormant USDC, faster settlement, and stronger auditability. For Nyx, the business is selling embedded compliance and credit infrastructure, not becoming every anchor's custom backend team.
 
 ### Go-To-Market
 
-The first wedge is remittance and B2B payout anchors with predictable short settlement windows. From there, the platform expands into private RWA-backed credit lines, liquidity facility marketplaces, and compliance-grade disclosure rails for institutions that need selective transparency.
+The first wedge is remittance and B2B payout anchors with predictable short settlement windows. From there, the infrastructure expands into private RWA-backed credit lines, liquidity facility integrations, and compliance-grade disclosure APIs for institutions that need selective transparency.
 
 ## Architecture
 
@@ -111,7 +144,6 @@ flowchart LR
     CLR["CollateralLockRegistry"]
     PCL["PrefundingCreditLine"]
     RH["RepaymentHistoryRegistry"]
-    DG["DisclosureGrantRegistry"]
     V1["Collateral Sufficiency Verifier"]
     V2["Repayment History Verifier"]
   end
@@ -149,7 +181,6 @@ flowchart LR
   API --> CUSDC
   API --> RH
   RH --> V2
-  API --> DG
   Watcher --> PCL
   Watcher --> CUSDC
   Watcher --> DB
@@ -201,7 +232,6 @@ This separation matters. `pending_stellar` means the anchor payout is waiting on
 - `CollateralLockRegistry`: prevents collateral reuse and releases locks after repayment.
 - `PrefundingCreditLine`: opens credit, records draw, records repayment, emits stable demo events.
 - `RepaymentHistoryRegistry`: stores private repayment leaf/root metadata and verifies repayment-history proof claims.
-- `DisclosureGrantRegistry`: thin grant registry for scope, expiry, revocation, and auditability. It does not store plaintext.
 
 ### Deployed Testnet Contracts
 
@@ -218,7 +248,6 @@ These are the current Stellar testnet contract IDs used by the demo configuratio
 | Verifier | `CollateralSufficiencyVerifier` | `CC3AV2YVDQGZBHPCILAUGEAAS5QF5QJYOV4NN2OSXVZCLIYAMKBLCDUS` | Verifies the Noir collateral sufficiency proof before credit opens. |
 | Verifier | `RepaymentHistoryVerifier` | `CC45VHO7QOQXVMGIQ3NF2EITMIIIAOHXPYAP5GE2CG7NJIVJ6KLPOA3U` | Verifies the Noir repayment history proof. |
 | History | `RepaymentHistoryRegistry` | `CBEMKJIIWQ4HNDDD5Z6SJMQTGUJ6PKBBKT2M7FGT3GMAFRDM2WXX6LSA` | Stores private repayment leaves/root metadata and proof nullifiers. |
-| Disclosure | `DisclosureGrantRegistry` | `CDLW3K347Y2KIJL6YIILSGSQDRBZGKNCDPBCNBLS5A34RDUC3OWX34ZQ` | Stores scoped disclosure grant hash, viewer hash, expiry, and revocation metadata. |
 | Confidential token | `cUSDC` | `CDE7R6Y7ZNNV4RDBK7BPL33KRX2JJFQ6NHS4FTTHM6P3J6MFX4LAIJRD` | OZ confidential liquidity token used for private draw/repayment artifacts. |
 | Collateral asset | Active collateral token | `CD7XXR3JSLW7RQ3BL32LXHWJRXFKINAMGHKRKHE7N4F7TWEGV67CG64K` | Current configured collateral asset for the credit path. |
 | OZ proof-of-life | `ConfidentialAuditor` | `CCFYKPBKHG2RH64WJSLD2LMBY5GUX3L6MFUY7NTJIM67Y7HQVPELNSTA` | Registry/source for auditor encryption keys and decryptable transfer payloads. |
@@ -228,13 +257,13 @@ These are the current Stellar testnet contract IDs used by the demo configuratio
 
 ### Deployed Mainnet Contracts
 
-Real Stellar mainnet contract IDs, deployed and verified live (each address confirmed via a direct on-chain read after deployment, not just a successful submission). Admin/operator/`credit-executor`/facility are currently a single EOA key (no timelock yet — see the note below the table). `disclosure-grant-registry` and `timelock-controller` are deliberately not deployed on mainnet yet.
+Real Stellar mainnet contract IDs, deployed and verified live. Each address was confirmed via a direct on-chain read after deployment, not just a successful submission.
 
 | Area | Contract | Mainnet contract ID | Role |
 |:--|:--|:--|:--|
-| Credit policy | `ParticipantPolicy` | `CAIZBWE4NXDT2WB4J5KULIFWGJIVNXZZGIODT7XRLTBD5JB5ZULGT4KT` | Stores KYB/participant approval. Deployed with an empty allow-list; approve real anchors via `set_participant`. |
+| Credit policy | `ParticipantPolicy` | `CAIZBWE4NXDT2WB4J5KULIFWGJIVNXZZGIODT7XRLTBD5JB5ZULGT4KT` | Stores KYB/participant approval. Anchor eligibility is managed on-chain through `set_participant`. |
 | Credit policy | `CollateralPolicyRegistry` | `CBVWB2TV73EUWDHC36E5BMMJNXU6HZKIC4SW66XO7FDN7TRSKELJJBBH` | Eligible collateral, haircut, tenor, oracle freshness. `TBILL` configured: 5% haircut, 5-day max tenor. |
-| Credit policy | `OracleAdapter` | `CCRQ2NL36F73ESAUXCHU7CHE6FRYEDPEY5MZJ33G3KZXPO2SGJMRNCM5` | Price/freshness checks. Seeded with an initial demo TBILL price ($1.00, since it's a mock RWA reference asset). |
+| Credit policy | `OracleAdapter` | `CCRQ2NL36F73ESAUXCHU7CHE6FRYEDPEY5MZJ33G3KZXPO2SGJMRNCM5` | Price/freshness checks. Seeded with an initial demo TBILL reference price for the RWA collateral flow. |
 | Credit policy | Reflector pulse | `CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN` | Real, live mainnet Reflector oracle. Verified directly: `base()="USD"`, tracks 16 assets including USDC/XLM/BTC/ETH. |
 | Credit state | `CollateralLockRegistry` | `CCP5XSBCIBBY4RYQZ46SGOY7G2TBKDKDK4VB2A7XFXNPRXMJA2MZQN4W` | Double-pledge prevention source of truth. |
 | Credit state | `PrefundingCreditLine` | `CDANS3RNG7LMLDYLBFAG5JXI4WD3PRCWQSQN45W6RA3EOBFMN6TF6PG7` | The product contract: open/draw/repay/liquidate lifecycle. |
@@ -242,15 +271,84 @@ Real Stellar mainnet contract IDs, deployed and verified live (each address conf
 | Verifier | `RepaymentHistoryVerifier` | `CDVACS3A6KQ7IJGPHGN5T6CK7YBGU4KOAJP64Y7FYZLXMWLFI6M74VUK` | Verifies the repayment history proof. Same VK-freshness check applied. |
 | History | `RepaymentHistoryRegistry` | `CCYNQHQ6LJLCOENOSSHD6X2SD4DQGAR3YPUNGTP5WGH6IM6DPIEEZGJF` | Private repayment leaves/root, wired to the verifier above. |
 | Confidential token | Credit currency (`cUSDC`) | `CAF7RMCG3UXC3CPDHRE5OM2G4TVSJIKQCR3MRRKS6C37EZNS4WTKKSXH` | Wraps the **real** mainnet USDC SAC (`CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75`, issuer confirmed to be Circle's official Stellar USDC issuer). |
-| Collateral asset | Collateral token (`cTBill`) | `CA6ALUNCBYBCU3GZWFAZ5FXTWERCXNBLMGWOGKVF37NBDABXSJVMVVFC` | Wraps a **mock** `TBILL` asset (`CBIKLVY7TQPMGNFTRSDLSLESN6LBDYWNNE5M2XLQGVQQUOP7HMMMZIY2`), issued by the admin key for demo purposes — not a real institutional RWA token. |
+| Collateral asset | Collateral token (`cTBill`) | `CA6ALUNCBYBCU3GZWFAZ5FXTWERCXNBLMGWOGKVF37NBDABXSJVMVVFC` | Wraps a demo `TBILL` reference asset (`CBIKLVY7TQPMGNFTRSDLSLESN6LBDYWNNE5M2XLQGVQQUOP7HMMMZIY2`) for RWA collateral flows. |
 | OZ layer | `ConfidentialAuditor` | `CBSTE4PIKPMUFOQTDNIKUFRVATF65ROIINUQGOI2W5DACIITD7UUEYYG` | Auditor key registry for both confidential-token instances. |
 | OZ layer | `ConfidentialVerifier` | `CAVNGRKXHVOYHHDZFPYEO4E3RKFMMJW4MS65YXWUH6NURCBUL3OJDDH2` | Verifies the OZ reference circuits (register/withdraw/transfer/spender flows). |
-| Compliance | `AccountPolicy` | `CD7CFNZRDNUR6WV2CWQAY7Z6G2XBQS3HVSKM2IVMEOFFAP6K2VUTSZS3` | Compliance/blocklist hook, wired into both confidential-token instances via `set_compliance_config`. Nothing is blocked by default. |
+| Compliance | `AccountPolicy` | `CD7CFNZRDNUR6WV2CWQAY7Z6G2XBQS3HVSKM2IVMEOFFAP6K2VUTSZS3` | Compliance/blocklist hook, wired into both confidential-token instances via `set_compliance_config`. |
 | Supply | `BlendFacility` | `CAYVCBWZGNO7ARF43LT4N7SWZVSSRFAVK5MMATSICAW32SZH4XAUKVZE` | Points at Blend v2's real, live mainnet default pool (`CCCCIQSDILITHMM7PBSLVDT5MISSY7R26MNZXCX4H7J5JQ5FPIYOGYFS`, `status: 0`/active), borrowing real USDC (`CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75`). |
 
-**Governance note:** no timelock controller on mainnet yet — a single EOA is admin/operator/`credit-executor`/facility everywhere, an explicit hackathon-budget trade-off. `transfer_admin_role`/`accept_admin_transfer` (already implemented, contract-test-verified) lets this move to a timelocked multisig later with zero redeployment.
+## Stellar Integrations
 
-**Facility note:** the credit-currency instance's facility balance is not yet funded with real USDC — real draws require either a direct USDC deposit or bootstrapping via `BlendFacility` (`supply_collateral` XLM → `borrow` USDC against the real pool).
+Nyx is not a generic lending dashboard. It is built around Stellar's anchor, liquidity, compliance, oracle, privacy, and smart-contract stack.
+
+### Blend Liquidity Integration
+
+Blend is the supply-side liquidity layer for Nyx.
+
+The mainnet `BlendFacility` adapter connects Nyx to Blend's live pool and real USDC asset. In the product model, facility operators can source wholesale USDC liquidity from Blend, then route that liquidity into Nyx's confidential credit flow for anchors.
+
+The public repo includes the on-chain adapter and demo orchestration surface. The customer-specific Blend automation is packaged as private/operator backend infrastructure, because each facility can have different custody, risk limits, rebalance rules, and compliance controls. That backend pipeline can handle the full facility lifecycle: supply collateral to Blend, borrow USDC, wrap or route liquidity into cUSDC, release confidential draw liquidity, collect repayment, and rebalance the Blend position.
+
+That keeps the model clean:
+
+- Blend sees public facility collateral and public pool risk.
+- Nyx sees ZK-verified private anchor collateral.
+- The anchor receives confidential short-term liquidity.
+- The backend pipeline can be customized per anchor/facility without changing the core contracts.
+
+### SEP And Anchor Compliance
+
+Nyx plugs into the Stellar anchor model instead of inventing a separate compliance workflow.
+
+- `SEP-1`: discovery through `stellar.toml` and Anchor Platform configuration.
+- `SEP-10`: authentication surface for anchor-style user/account flows.
+- `SEP-12`: KYB/customer status is ingested by the backend and synced into `ParticipantPolicy`.
+- `SEP-31`: payout transaction state stays separate from Nyx product state, so the payment workflow and credit workflow do not get mixed.
+
+This matters because the backend is compliance infrastructure, not the source of financial truth. Different anchors can have different KYB vendors, sanctions policies, payout corridors, and reporting needs, while the contract layer keeps the credit rules enforceable.
+
+### Soroban Credit Contracts
+
+Soroban is where the credit rules live:
+
+- `ParticipantPolicy` controls who is allowed to use the system.
+- `CollateralPolicyRegistry` controls collateral eligibility, haircut, max tenor, and policy terms.
+- `OracleAdapter` gives the credit contracts price/freshness inputs.
+- `CollateralLockRegistry` prevents double-pledging the same confidential collateral.
+- `PrefundingCreditLine` enforces open, draw, repay, lock, and lifecycle events.
+- `RepaymentHistoryRegistry` verifies private repayment-history statements.
+
+The backend coordinates these contracts, but it does not replace them.
+
+### Reflector Oracle Integration
+
+Reflector gives Nyx a live oracle path for market pricing.
+
+The mainnet configuration points at Reflector's live oracle contract. Nyx uses oracle price and freshness as public proof inputs, so the collateral sufficiency proof is tied to current policy and market data instead of a frontend constant.
+
+### OpenZeppelin Confidential Tokens
+
+Nyx uses OpenZeppelin Confidential Tokens as the privacy layer:
+
+- `cUSDC` represents the private liquidity leg.
+- `cTBill` represents confidential tokenized collateral.
+- `ConfidentialVerifier` verifies confidential token operations.
+- `ConfidentialAuditor` provides encrypted auditor payloads.
+- Compliance hooks restrict who can participate in the private token flow.
+
+This lets Nyx release and repay liquidity without exposing transfer amounts publicly, while still preserving an authorized audit path.
+
+### Noir, UltraHonk, And Stellar ZK
+
+Nyx uses Noir circuits for the private credit statements and UltraHonk proofs for verification.
+
+- Collateral sufficiency proves hidden collateral covers the requested credit after oracle price and haircut.
+- Repayment history proves a private borrower-history property without revealing the full book.
+- Pedersen commitments match the confidential-token balance model.
+- Poseidon-style hashes support nullifiers, history roots, and ZK-friendly commitments.
+- Soroban verifier contracts check proof outputs before credit state changes.
+
+As Stellar adds more ZK-native primitives through protocol-level crypto support, this architecture becomes cheaper and more native to the chain.
 
 ### Confidential Token Layer
 
@@ -287,7 +385,7 @@ Product circuits are the ones the Nyx credit flow depends on. OZ confidential-to
 | Confidential lib | `oz-confidential/circuits/lib` | Shared Pedersen commitment, Poseidon-domain hashing, ECDH, encryption masks, viewing key derivation, and test vectors. | All OZ and Nyx circuits. |
 | Primitive gadgets | `oz-confidential/circuits/gadgets/*` | Standalone test circuits for primitives such as `commit`, `ecdh`, `encrypt_amount`, `poseidon_with_domain`, `sponge_squeeze_2`, `vk_from_sk`, and curve validation. | Cross-language fixture checks and primitive regression tests. |
 
-Demo proving runs through the `prover-worker` service. In an institutional deployment, the prover can be operated by the anchor, auditor, or another controlled execution environment while the contracts continue to verify only public proof inputs and proof bytes.
+Demo proving runs through the `prover-worker` service as Alpha's proving environment. The same proof interface can be operated by the anchor, auditor, or another controlled execution environment while the contracts continue to verify only public proof inputs and proof bytes.
 
 ## Quick Start
 
@@ -356,7 +454,6 @@ COLLATERAL_TOKEN_CONTRACT_ID=...
 CONFIDENTIAL_CUSDC_CONTRACT_ID=...
 REPAYMENT_HISTORY_CONTRACT_ID=...
 REPAYMENT_HISTORY_VERIFIER_CONTRACT_ID=...
-DISCLOSURE_GRANT_REGISTRY_CONTRACT_ID=...
 ```
 
 ### Start The Stack
@@ -697,11 +794,11 @@ Nyx uses:
 1. OZ ConfidentialToken as private transfer truth.
 2. OZ auditor ciphertexts for decryptable financial evidence.
 3. Disclosure SDK/circuit where reusable.
-4. Thin `DisclosureGrantRegistry` for permission metadata only.
-5. Backend for encrypted bundle and session storage only.
+4. Encrypted disclosure bundles for scoped sharing.
+5. Backend session storage for encrypted bundles and viewer links only.
 6. Browser or auditor-controlled tooling for decryption and scoped verification.
 
-`DisclosureGrantRegistry` stores:
+The disclosure layer is designed to reveal one approved fact at a time, not the full private book. A disclosure bundle can carry:
 
 ```txt
 grant_id
@@ -715,7 +812,7 @@ revoked
 created_at_ledger
 ```
 
-It must not store:
+Disclosure is intentionally scoped. It should not expose:
 
 ```txt
 plaintext amount
@@ -826,19 +923,18 @@ Check API container env:
 docker compose exec -T api sh -lc 'env | grep -E "CUSDC|ALPHA|FACILITY|AUDITOR" | sort'
 ```
 
-## Status
+## Roadmap
 
-The current backend and contracts support the core demo path:
+Nyx already demonstrates the core contract/circuit architecture for private prefunding credit. The next product steps are about packaging the same primitive for real operators, larger facilities, and anchor-specific compliance environments.
 
-- SEP-31 state separation.
-- KYB to ParticipantPolicy sync.
-- Chain-sourced quote.
-- Real collateral sufficiency proof.
-- Real testnet credit open.
-- Real confidential cUSDC draw transfer.
-- Real confidential cUSDC repayment transfer.
-- Auditor evidence references without public plaintext.
-- Thin disclosure grant architecture.
-- SQLite persistence for app state and watcher cursor.
+| Track | Direction |
+|:--|:--|
+| Anchor-controlled proving | Package the prover as an anchor-operated browser, CLI, or private service so each institution can choose its own custody and privacy boundary. |
+| Blend facility automation | Expand the operator backend pipeline around the live `BlendFacility` adapter: facility limits, rebalance policies, collateral supply, USDC borrow, cUSDC routing, repayment, and facility reporting. |
+| Collateral vaults | Add vault-per-credit-line collateral isolation so anchors can pledge a defined tranche without freezing broader treasury balances. |
+| Facility risk accounting | Add richer facility exposure controls, utilization dashboards, and lender reporting around aggregate outstanding credit. |
+| Selective disclosure SDK | Package disclosure bundles, scoped viewer links, expiry, revocation, viewer permissions, and auditor verification as reusable embedded APIs. |
+| Mainnet operations | Add timelocked/multisig administration, monitoring, alerting, TTL/rent automation, and deployment runbooks for production operators. |
+| RWA integrations | Replace demo reference collateral with issuer-backed RWA assets and custom oracle policies per anchor, lender, and jurisdiction. |
 
-Use `/api/demo/state` as the first readiness check before opening the frontend.
+The goal is not to make every anchor use the same backend. The goal is to keep the core credit and privacy layer contract-enforced, while giving each anchor/operator a configurable compliance and liquidity pipeline around it.
