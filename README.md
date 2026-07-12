@@ -226,6 +226,32 @@ These are the current Stellar testnet contract IDs used by the demo configuratio
 | OZ proof-of-life | `cTBill` | `CB2WSEQ4TIXEV2EQDIIAPMSBOS5YLTQ63RMMFLLSLWFJHVXXDAHQKG5H` | Confidential treasury-bill wrapper proven in the OZ token proof-of-life path. |
 | OZ proof-of-life | `cXAUm` | `CART6L62LMACC4UTUHC7TTUVBJ2PQU26KQL6N4XJPIY2H7PMMQTEP6VE` | Confidential gold wrapper deployed for reference/proof-of-life, not central to prefunding. |
 
+### Deployed Mainnet Contracts
+
+Real Stellar mainnet contract IDs, deployed and verified live (each address confirmed via a direct on-chain read after deployment, not just a successful submission). Admin/operator/`credit-executor`/facility are currently a single EOA key (no timelock yet — see the note below the table). `disclosure-grant-registry` and `timelock-controller` are deliberately not deployed on mainnet yet.
+
+| Area | Contract | Mainnet contract ID | Role |
+|:--|:--|:--|:--|
+| Credit policy | `ParticipantPolicy` | `CAIZBWE4NXDT2WB4J5KULIFWGJIVNXZZGIODT7XRLTBD5JB5ZULGT4KT` | Stores KYB/participant approval. Deployed with an empty allow-list; approve real anchors via `set_participant`. |
+| Credit policy | `CollateralPolicyRegistry` | `CBVWB2TV73EUWDHC36E5BMMJNXU6HZKIC4SW66XO7FDN7TRSKELJJBBH` | Eligible collateral, haircut, tenor, oracle freshness. `TBILL` configured: 5% haircut, 5-day max tenor. |
+| Credit policy | `OracleAdapter` | `CCRQ2NL36F73ESAUXCHU7CHE6FRYEDPEY5MZJ33G3KZXPO2SGJMRNCM5` | Price/freshness checks. Seeded with an initial demo TBILL price ($1.00, since it's a mock RWA reference asset). |
+| Credit policy | Reflector pulse | `CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN` | Real, live mainnet Reflector oracle. Verified directly: `base()="USD"`, tracks 16 assets including USDC/XLM/BTC/ETH. |
+| Credit state | `CollateralLockRegistry` | `CCP5XSBCIBBY4RYQZ46SGOY7G2TBKDKDK4VB2A7XFXNPRXMJA2MZQN4W` | Double-pledge prevention source of truth. |
+| Credit state | `PrefundingCreditLine` | `CDANS3RNG7LMLDYLBFAG5JXI4WD3PRCWQSQN45W6RA3EOBFMN6TF6PG7` | The product contract: open/draw/repay/liquidate lifecycle. |
+| Verifier | `CollateralSufficiencyVerifier` | `CAAJXWNESRFOQVQXGIQ5UA44UIAFKYECXXRZ26GHG26SGCSCPH7Q6WNG` | Verifies the collateral sufficiency proof before credit opens. VK confirmed byte-identical to a fresh regeneration from current circuit source before deploying. |
+| Verifier | `RepaymentHistoryVerifier` | `CDVACS3A6KQ7IJGPHGN5T6CK7YBGU4KOAJP64Y7FYZLXMWLFI6M74VUK` | Verifies the repayment history proof. Same VK-freshness check applied. |
+| History | `RepaymentHistoryRegistry` | `CCYNQHQ6LJLCOENOSSHD6X2SD4DQGAR3YPUNGTP5WGH6IM6DPIEEZGJF` | Private repayment leaves/root, wired to the verifier above. |
+| Confidential token | Credit currency (`cUSDC`) | `CAF7RMCG3UXC3CPDHRE5OM2G4TVSJIKQCR3MRRKS6C37EZNS4WTKKSXH` | Wraps the **real** mainnet USDC SAC (`CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75`, issuer confirmed to be Circle's official Stellar USDC issuer). |
+| Collateral asset | Collateral token (`cTBill`) | `CA6ALUNCBYBCU3GZWFAZ5FXTWERCXNBLMGWOGKVF37NBDABXSJVMVVFC` | Wraps a **mock** `TBILL` asset (`CBIKLVY7TQPMGNFTRSDLSLESN6LBDYWNNE5M2XLQGVQQUOP7HMMMZIY2`), issued by the admin key for demo purposes — not a real institutional RWA token. |
+| OZ layer | `ConfidentialAuditor` | `CBSTE4PIKPMUFOQTDNIKUFRVATF65ROIINUQGOI2W5DACIITD7UUEYYG` | Auditor key registry for both confidential-token instances. |
+| OZ layer | `ConfidentialVerifier` | `CAVNGRKXHVOYHHDZFPYEO4E3RKFMMJW4MS65YXWUH6NURCBUL3OJDDH2` | Verifies the OZ reference circuits (register/withdraw/transfer/spender flows). |
+| Compliance | `AccountPolicy` | `CD7CFNZRDNUR6WV2CWQAY7Z6G2XBQS3HVSKM2IVMEOFFAP6K2VUTSZS3` | Compliance/blocklist hook, wired into both confidential-token instances via `set_compliance_config`. Nothing is blocked by default. |
+| Supply | `BlendFacility` | `CAYVCBWZGNO7ARF43LT4N7SWZVSSRFAVK5MMATSICAW32SZH4XAUKVZE` | Points at Blend v2's real, live mainnet default pool (`CCCCIQSDILITHMM7PBSLVDT5MISSY7R26MNZXCX4H7J5JQ5FPIYOGYFS`, `status: 0`/active), borrowing real USDC (`CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75`). |
+
+**Governance note:** no timelock controller on mainnet yet — a single EOA is admin/operator/`credit-executor`/facility everywhere, an explicit hackathon-budget trade-off. `transfer_admin_role`/`accept_admin_transfer` (already implemented, contract-test-verified) lets this move to a timelocked multisig later with zero redeployment.
+
+**Facility note:** the credit-currency instance's facility balance is not yet funded with real USDC — real draws require either a direct USDC deposit or bootstrapping via `BlendFacility` (`supply_collateral` XLM → `borrow` USDC against the real pool).
+
 ### Confidential Token Layer
 
 Nyx uses the OpenZeppelin Confidential Token design as the privacy source of truth:

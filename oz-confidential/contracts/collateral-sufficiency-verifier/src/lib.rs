@@ -1,6 +1,12 @@
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, panic_with_error, symbol_short, Bytes, Env, Symbol};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, panic_with_error, symbol_short, Address, Bytes, BytesN, Env,
+    Symbol, Vec,
+};
+use stellar_access::access_control::{self as access_control, AccessControl};
+use stellar_contract_utils::upgradeable;
+use stellar_macros::only_admin;
 use ultrahonk_soroban_verifier::{UltraHonkVerifier, VkLoadError, PROOF_BYTES};
 
 #[contracterror]
@@ -24,12 +30,22 @@ impl CollateralSufficiencyVerifierContract {
         symbol_short!("vk")
     }
 
-    pub fn __constructor(e: &Env, vk_bytes: Bytes) {
+    pub fn __constructor(e: &Env, admin: Address, vk_bytes: Bytes) {
         if e.storage().instance().has(&Self::key_vk()) {
             panic_with_error!(e, VerifierError::AlreadyInitialized);
         }
+        access_control::set_admin(e, &admin);
         Self::parse_verifier(e, &vk_bytes);
         e.storage().instance().set(&Self::key_vk(), &vk_bytes);
+    }
+
+    /// Admin-gated WASM upgrade. Keep the admin behind a timelocked multisig
+    /// -- this contract is the ZK trust root, so a compromised admin here
+    /// could swap in a verifier that accepts fraudulent proofs. The same
+    /// timelock delay that protects the other contracts applies here too.
+    #[only_admin]
+    pub fn upgrade(e: &Env, new_wasm_hash: BytesN<32>) {
+        upgradeable::upgrade(e, &new_wasm_hash);
     }
 
     pub fn vk_bytes(e: &Env) -> Bytes {
@@ -57,3 +73,6 @@ impl CollateralSufficiencyVerifierContract {
         })
     }
 }
+
+#[contractimpl(contracttrait)]
+impl AccessControl for CollateralSufficiencyVerifierContract {}

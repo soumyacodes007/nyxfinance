@@ -557,11 +557,7 @@ try {
   );
   if (!("error" in duplicateLeaf)) throw new Error("duplicate repayment leaf unexpectedly succeeded");
 
-  const rootTx = await client.post("/api/repayment-history/root", {
-    positionId,
-    historyRoot: repaymentFixture.hex.historyRoot,
-    leafCount: repaymentFixture.leaves.length
-  });
+  const rootTx = await client.post("/api/repayment-history/root", { positionId });
 
   const repaymentProofJob = await client.post<{ id: string }>("/api/proof/repayment-history", {
     positionId: repaymentFixture.positionId,

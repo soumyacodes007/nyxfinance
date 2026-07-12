@@ -5,6 +5,7 @@ import { insertConfidentialTransferEvidence } from "../db/sqlite.js";
 import type { AppConfig } from "../lib/env.js";
 import { newId } from "../lib/ids.js";
 import type {
+  ConfidentialTransferMethod,
   ConfidentialTransferRequest,
   ConfidentialTransferResult
 } from "../types/credit-line.js";
@@ -106,6 +107,22 @@ export const fetchEmittedConfidentialEventPayload = async (
   return event ? decodeEventValue(input.eventName, event.value) : null;
 };
 
+// Consolidates `receiving_balance` into `spendable_balance` for a
+// confidential account. The repayment transfer proof is built assuming this
+// has already happened (e.g. draw funds landed in receiving_balance and must
+// be merged before the anchor can spend them back out), so this stays a
+// separate preceding transaction rather than folding into the atomic
+// repay() call -- it's a balance-housekeeping step, not part of the
+// draw/repay trust boundary K9-adjacent fix addresses.
+export const mergeConfidentialBalance = async (
+  config: AppConfig,
+  tokenContractId: string,
+  accountSecretKey: string
+): Promise<{ hash: string; ledger?: number }> => {
+  const signer = keypairFromSecret(accountSecretKey, "accountSecretKey");
+  return submitContractCallWithKeypair(config, signer, tokenContractId, "merge", [addressArg(signer.publicKey())]);
+};
+
 const resolveSigner = (
   config: AppConfig,
   method: "confidential_transfer" | "confidential_transfer_from",
@@ -128,6 +145,93 @@ const resolveSigner = (
     throw new Error("confidential_transfer signer must match the from account");
   }
   return { signer, spender: null };
+};
+
+// Records evidence for a confidential transfer that already happened as a
+// NESTED cross-contract call inside another transaction (execute_draw's
+// confidential_transfer_from, repay's confidential_transfer) rather than as
+// its own top-level submission. The token contract still emits the same
+// transfer/spender_transfer event, just under the outer call's tx hash, so
+// event-fetching works unchanged.
+export const recordConfidentialTransferEvidence = async (
+  config: AppConfig,
+  db: AppDatabase,
+  input: {
+    anchorTransactionId?: string;
+    positionId: string;
+    direction: "draw" | "repayment";
+    transferCommitment?: string;
+    tokenContractId: string;
+    method: ConfidentialTransferMethod;
+    signer: string;
+    spender: string | null;
+    from: string;
+    to: string;
+    dataXdrBase64: string;
+    txHash: string;
+    ledger?: number;
+    auditorPayload?: Record<string, unknown>;
+    eventPayload?: Record<string, unknown>;
+  }
+): Promise<ConfidentialTransferResult> => {
+  const data = decodeDataXdr(input.dataXdrBase64);
+  const dataXdrSha256 = sha256Hex(data);
+  const eventName = input.method === "confidential_transfer_from" ? "spender_transfer" : "transfer";
+  const emittedPayload = await fetchEmittedConfidentialEventPayload(config, {
+    tokenContractId: input.tokenContractId,
+    txHash: input.txHash,
+    ledger: input.ledger,
+    eventName
+  }).catch((error) => ({
+    emittedEventFetchError: error instanceof Error ? error.message : String(error)
+  }));
+  const eventPayload = {
+    eventName,
+    tokenContractId: input.tokenContractId,
+    method: input.method,
+    txHash: input.txHash,
+    ledger: input.ledger,
+    from: input.from,
+    to: input.to,
+    spender: input.spender,
+    dataXdrSha256,
+    ...(emittedPayload ?? {}),
+    ...(input.eventPayload ?? {})
+  };
+
+  insertConfidentialTransferEvidence(db, {
+    id: newId("ctf"),
+    anchorTransactionId: input.anchorTransactionId ?? null,
+    positionId: input.positionId,
+    direction: input.direction,
+    tokenContractId: input.tokenContractId,
+    method: input.method,
+    signer: input.signer,
+    spender: input.spender,
+    fromAccount: input.from,
+    toAccount: input.to,
+    transferCommitment: input.transferCommitment ?? null,
+    txHash: input.txHash,
+    ledger: input.ledger ?? null,
+    auditorPayload: input.auditorPayload ?? null,
+    eventPayload,
+    dataXdrSha256,
+    dataXdrBase64: input.dataXdrBase64
+  });
+
+  return {
+    tokenContractId: input.tokenContractId,
+    method: input.method,
+    signer: input.signer,
+    spender: input.spender,
+    from: input.from,
+    to: input.to,
+    txHash: input.txHash,
+    ledger: input.ledger,
+    dataXdrSha256,
+    dataXdrBase64: input.dataXdrBase64,
+    auditorPayloadRef: input.auditorPayload ? "live_ciphertext" : "not_provided"
+  };
 };
 
 export const submitAndRecordConfidentialTransfer = async (

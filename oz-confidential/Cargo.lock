@@ -1032,6 +1032,7 @@ version = "0.1.0"
 dependencies = [
  "soroban-sdk",
  "stellar-access",
+ "stellar-contract-utils",
  "stellar-macros",
  "stellar-tokens",
 ]
@@ -1062,6 +1063,7 @@ version = "0.1.0"
 dependencies = [
  "soroban-sdk",
  "stellar-access",
+ "stellar-contract-utils",
  "stellar-macros",
 ]
 
@@ -1070,6 +1072,9 @@ name = "nyx-collateral-sufficiency-verifier"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk",
+ "stellar-access",
+ "stellar-contract-utils",
+ "stellar-macros",
  "ultrahonk_soroban_verifier",
 ]
 
@@ -1079,6 +1084,7 @@ version = "0.1.0"
 dependencies = [
  "soroban-sdk",
  "stellar-access",
+ "stellar-contract-utils",
  "stellar-macros",
  "stellar-tokens",
 ]
@@ -1089,6 +1095,7 @@ version = "0.1.0"
 dependencies = [
  "soroban-sdk",
  "stellar-access",
+ "stellar-contract-utils",
  "stellar-macros",
  "stellar-tokens",
 ]
@@ -1099,6 +1106,7 @@ version = "0.1.0"
 dependencies = [
  "soroban-sdk",
  "stellar-access",
+ "stellar-contract-utils",
  "stellar-macros",
  "stellar-tokens",
 ]
@@ -1119,6 +1127,7 @@ version = "0.1.0"
 dependencies = [
  "soroban-sdk",
  "stellar-access",
+ "stellar-contract-utils",
  "stellar-macros",
 ]
 
@@ -1138,6 +1147,7 @@ version = "0.1.0"
 dependencies = [
  "soroban-sdk",
  "stellar-access",
+ "stellar-contract-utils",
  "stellar-macros",
 ]
 
@@ -1155,6 +1165,7 @@ dependencies = [
 name = "nyx-repayment-history-registry"
 version = "0.1.0"
 dependencies = [
+ "soroban-poseidon",
  "soroban-sdk",
  "stellar-access",
  "stellar-contract-utils",
@@ -1166,7 +1177,21 @@ name = "nyx-repayment-history-verifier"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk",
+ "stellar-access",
+ "stellar-contract-utils",
+ "stellar-macros",
  "ultrahonk_soroban_verifier",
+]
+
+[[package]]
+name = "nyx-timelock-controller"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
+ "stellar-access",
+ "stellar-contract-utils",
+ "stellar-governance",
+ "stellar-macros",
 ]
 
 [[package]]

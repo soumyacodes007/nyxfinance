@@ -11,4 +11,7 @@ doctest = false
 
 [dependencies]
 soroban-sdk = { workspace = true, features = ["alloc"] }
+stellar-access = { workspace = true }
+stellar-contract-utils = { workspace = true }
+stellar-macros = { workspace = true }
 ultrahonk_soroban_verifier = { workspace = true }

@@ -40,6 +40,9 @@ const baseConfig = {
     auditor: "GAUDITOR"
   },
   demoAnchorSecretKey: null,
+  demoAnchorConfidentialSk: null,
+  demoAnchorCollateralAmount: null,
+  demoAnchorCollateralRandomness: null,
   participantPolicyOperatorSecretKey: null,
   creditExecutorSecretKey: null,
   requireConfidentialRepaymentTransfer: false,

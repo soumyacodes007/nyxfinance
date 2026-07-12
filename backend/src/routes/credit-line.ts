@@ -22,10 +22,9 @@ const openCreditSchema = z.object({
   anchorTransactionId: z.string().optional(),
   positionId: hex32,
   anchor: z.string().min(1),
+  anchorSecretKey: z.string().min(1),
   collateralToken: z.string().optional(),
   lockKey: hex32,
-  collateralCommitmentX: hex32,
-  collateralCommitmentY: hex32,
   creditCommitmentX: hex32,
   creditCommitmentY: hex32,
   oraclePriceE7: z.string().regex(/^[0-9]+$/),
@@ -40,15 +39,19 @@ const drawSchema = z.object({
   anchorTransactionId: z.string().optional(),
   positionId: hex32,
   facility: z.string().min(1),
-  transferCommitment: hex32,
+  transferCommitmentX: hex32,
+  transferCommitmentY: hex32,
+  creditExecutorSecretKey: z.string().min(1),
   confidentialTransfer: confidentialTransferSchema
 });
 
 const repaySchema = z.object({
   anchorTransactionId: z.string().optional(),
   positionId: hex32,
+  facility: z.string().min(1),
+  anchorSecretKey: z.string().min(1),
   repaymentCommitment: hex32,
-  confidentialTransfer: confidentialTransferSchema.optional()
+  confidentialTransfer: confidentialTransferSchema
 });
 
 export const registerCreditLineRoutes = async (

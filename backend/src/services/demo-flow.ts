@@ -24,6 +24,7 @@ import type { PrefundingQuote } from "../types/quote.js";
 import { createCollateralSufficiencyJob, createRepaymentHistoryJob } from "./proof-jobs.js";
 import { processNextProofJob } from "./prover-worker.js";
 import { executeDraw, openCreditLine, repayCreditLine } from "./credit-line.js";
+import { mergeConfidentialBalance } from "./confidential-token-transfer.js";
 import { createSep31Transaction, markSep31Completed } from "./sep31.js";
 import { putSep12Customer } from "./sep12.js";
 import {
@@ -33,13 +34,14 @@ import {
 } from "./repayment-history.js";
 
 const SNAPSHOT_KEY = "demo_flow_state";
-const DRAW_COMMITMENT = "4444444444444444444444444444444444444444444444444444444444444444";
 const REPAYMENT_COMMITMENT = "5555555555555555555555555555555555555555555555555555555555555555";
 
 type CollateralFixture = CollateralSufficiencyProofPayload & {
   hex: {
     collateralCommitmentX: string;
     collateralCommitmentY: string;
+    yX: string;
+    yY: string;
     creditCommitmentX: string;
     creditCommitmentY: string;
     oraclePriceE7: string;
@@ -159,6 +161,14 @@ type DemoAnchorProfile = {
   id: string;
   account: string;
   signerSecretKey?: string;
+  // F1/C1 v2: the anchor's confidential-token spending secret and the real
+  // opening of its on-chain `spendable_balance` -- distinct from
+  // `signerSecretKey` (the Stellar ed25519 key). Whoever runs this demo
+  // prover must know both; there is no way to derive a hidden balance's
+  // opening from chain state.
+  confidentialSk?: string;
+  collateralAmount?: string;
+  collateralRandomness?: string;
   organizationName: string;
   emailAddress: string;
   drawTransferDataXdrBase64: string;
@@ -221,10 +231,20 @@ const resolveDemoProfile = (
     throw new Error(`${profilePrefix(id)}_PUBLIC_KEY is required for demo profile ${id}`);
   }
   const signerSecretKey = profileEnv(id, "ANCHOR_SECRET_KEY", config.demoAnchorSecretKey);
+  const confidentialSk = profileEnv(id, "CONFIDENTIAL_SK", config.demoAnchorConfidentialSk);
+  const collateralAmount = profileEnv(id, "COLLATERAL_AMOUNT", config.demoAnchorCollateralAmount);
+  const collateralRandomness = profileEnv(
+    id,
+    "COLLATERAL_RANDOMNESS",
+    config.demoAnchorCollateralRandomness
+  );
   return {
     id,
     account,
     ...(signerSecretKey ? { signerSecretKey } : {}),
+    ...(confidentialSk ? { confidentialSk } : {}),
+    ...(collateralAmount ? { collateralAmount } : {}),
+    ...(collateralRandomness ? { collateralRandomness } : {}),
     organizationName:
       profileEnv(id, "ORGANIZATION_NAME", "Alpha Remit") ??
       `${id.slice(0, 1).toUpperCase()}${id.slice(1)} Remit`,
@@ -264,7 +284,16 @@ const commandEnv = (config: AppConfig): NodeJS.ProcessEnv => ({
     .join(":")
 });
 
-const createCollateralFixture = (config: AppConfig, oraclePriceE7: string): CollateralFixture => {
+const createCollateralFixture = (
+  config: AppConfig,
+  oraclePriceE7: string,
+  profile: DemoAnchorProfile
+): CollateralFixture => {
+  if (!profile.confidentialSk || !profile.collateralAmount || !profile.collateralRandomness) {
+    throw new Error(
+      `${profilePrefix(profile.id)}_CONFIDENTIAL_SK / _COLLATERAL_AMOUNT / _COLLATERAL_RANDOMNESS are required: the collateral-sufficiency proof must bind to the anchor's real on-chain spendable_balance opening`
+    );
+  }
   const lockKey = randomHex32();
   const positionSecret = BigInt(`0x${randomBytes(16).toString("hex")}`).toString(10);
   const result = spawnSync(
@@ -278,7 +307,10 @@ const createCollateralFixture = (config: AppConfig, oraclePriceE7: string): Coll
       "collateral-fixture",
       lockKey,
       positionSecret,
-      oraclePriceE7
+      oraclePriceE7,
+      profile.confidentialSk,
+      profile.collateralAmount,
+      profile.collateralRandomness
     ],
     {
       cwd: resolve(config.ozConfidentialRoot),
@@ -447,9 +479,14 @@ export const resetDemoFlow = async (
   });
 };
 
+// v2 (F1/C1) canonical order: c_spend(x,y) | Y(x,y) | credit_commitment(x,y) |
+// oracle_price_e7 | haircut_bps | tenor_days | lock_key | position_nullifier
+// -- must byte-match `PrefundingCreditLineContract::public_inputs`.
 const publicInputsFromFixture = (fixture: CollateralFixture): string[] => [
   fixture.hex.collateralCommitmentX,
   fixture.hex.collateralCommitmentY,
+  fixture.hex.yX,
+  fixture.hex.yY,
   fixture.hex.creditCommitmentX,
   fixture.hex.creditCommitmentY,
   fixture.hex.oraclePriceE7,
@@ -526,7 +563,7 @@ export const openDemoCredit = async (
     quote
   });
   const positionId = randomHex32();
-  const fixture = createCollateralFixture(config, quote.oraclePriceE7);
+  const fixture = createCollateralFixture(config, quote.oraclePriceE7, profile);
   const publicInputs = publicInputsFromFixture(fixture);
 
   if (
@@ -539,6 +576,7 @@ export const openDemoCredit = async (
 
   const proofJob = createCollateralSufficiencyJob(db, {
     quoteId: quote.id,
+    sk: fixture.sk,
     collateralAmount: fixture.collateralAmount,
     collateralRandomness: fixture.collateralRandomness,
     creditAmount: fixture.creditAmount,
@@ -546,6 +584,8 @@ export const openDemoCredit = async (
     positionSecret: fixture.positionSecret,
     collateralCommitmentX: fixture.collateralCommitmentX,
     collateralCommitmentY: fixture.collateralCommitmentY,
+    yX: fixture.yX,
+    yY: fixture.yY,
     creditCommitmentX: fixture.creditCommitmentX,
     creditCommitmentY: fixture.creditCommitmentY,
     oraclePriceE7: quote.oraclePriceE7,
@@ -563,20 +603,22 @@ export const openDemoCredit = async (
     throw new Error("proof public inputs do not match generated credit-open payload");
   }
 
+  if (!profile.signerSecretKey) {
+    throw new Error("anchor signer secret is not configured for this profile (ANCHOR_SECRET_KEY)");
+  }
   const open = await openCreditLine(config, db, {
     ...(anchorTransactionId ? { anchorTransactionId } : {}),
     positionId,
     anchor: quote.account,
+    anchorSecretKey: profile.signerSecretKey,
     collateralToken: quote.collateralToken,
-    lockKey: publicInputs[7] ?? fixture.hex.lockKey,
-    collateralCommitmentX: publicInputs[0] ?? fixture.hex.collateralCommitmentX,
-    collateralCommitmentY: publicInputs[1] ?? fixture.hex.collateralCommitmentY,
-    creditCommitmentX: publicInputs[2] ?? fixture.hex.creditCommitmentX,
-    creditCommitmentY: publicInputs[3] ?? fixture.hex.creditCommitmentY,
+    lockKey: publicInputs[9] ?? fixture.hex.lockKey,
+    creditCommitmentX: publicInputs[4] ?? fixture.hex.creditCommitmentX,
+    creditCommitmentY: publicInputs[5] ?? fixture.hex.creditCommitmentY,
     oraclePriceE7: quote.oraclePriceE7,
     haircutBps: quote.haircutBps,
     tenorDays: quote.tenorDays,
-    positionNullifier: publicInputs[8] ?? fixture.hex.positionNullifier,
+    positionNullifier: publicInputs[10] ?? fixture.hex.positionNullifier,
     publicInputsHex: proof.result.publicInputsHex,
     proofHex: proof.result.proofHex
   });
@@ -621,11 +663,27 @@ export const drawDemoCredit = async (
   if (!quote) throw new Error("No quote found for demo draw");
   const facility = resolveFacility(config);
 
+  // K2: the draw's commitment must equal the position's proven
+  // credit_commitment exactly. Public-input layout (v2, 11 x 32-byte
+  // fields): c_spend(0,1) | Y(2,3) | credit_commitment(4,5) | oracle(6) |
+  // haircut(7) | tenor(8) | lock_key(9) | nullifier(10) -- indices 4/5 are
+  // bytes [256:320) and [320:384) of the concatenated hex.
+  const publicInputsHex = current.proof?.publicInputsHex;
+  if (!publicInputsHex) throw new Error("No collateral-sufficiency proof found for this position");
+  const transferCommitmentX = publicInputsHex.slice(256, 320);
+  const transferCommitmentY = publicInputsHex.slice(320, 384);
+
+  if (!config.creditExecutorSecretKey) {
+    throw new Error("CREDIT_EXECUTOR_SECRET_KEY is required: execute_draw needs credit_executor's require_auth()");
+  }
+
   const draw = await executeDraw(config, db, {
     ...(anchorTransactionId ? { anchorTransactionId } : {}),
     positionId,
     facility,
-    transferCommitment: DRAW_COMMITMENT,
+    transferCommitmentX,
+    transferCommitmentY,
+    creditExecutorSecretKey: config.creditExecutorSecretKey,
     confidentialTransfer: {
       tokenContractId: config.contracts.confidentialCusdc ?? undefined,
       method: "confidential_transfer_from",
@@ -646,7 +704,7 @@ export const drawDemoCredit = async (
       txHash: draw.hash,
       ledger: draw.ledger ?? null,
       confidentialTransferTxHash: draw.confidentialTransfer?.txHash ?? null,
-      transferCommitment: DRAW_COMMITMENT
+      transferCommitment: transferCommitmentX
     },
     updatedAt: nowIso()
   });
@@ -670,18 +728,30 @@ export const repayDemoCredit = async (
   if (!quote) throw new Error("No quote found for demo repayment");
   const facility = resolveFacility(config);
 
+  if (!profile.signerSecretKey) {
+    throw new Error("anchor signerSecretKey is required: repay needs the anchor's own require_auth()");
+  }
+  const tokenContractId = config.contracts.confidentialCusdc;
+  if (tokenContractId && process.env.REPAYMENT_MERGE_BEFORE_TRANSFER !== "0") {
+    // Draw funds land in receiving_balance; the repayment transfer proof is
+    // built assuming they've been merged into spendable_balance already.
+    // This is balance housekeeping, kept as its own preceding transaction
+    // (see the comment on mergeConfidentialBalance).
+    await mergeConfidentialBalance(config, tokenContractId, profile.signerSecretKey);
+  }
+
   const repay = await repayCreditLine(config, db, {
     ...(anchorTransactionId ? { anchorTransactionId } : {}),
     positionId,
+    facility,
+    anchorSecretKey: profile.signerSecretKey,
     repaymentCommitment: REPAYMENT_COMMITMENT,
     confidentialTransfer: {
       tokenContractId: config.contracts.confidentialCusdc ?? undefined,
       method: "confidential_transfer",
       from: quote.account,
       to: facility,
-      signerSecretKey: profile.signerSecretKey,
       dataXdrBase64: profile.repaymentTransferDataXdrBase64,
-      mergeBeforeTransfer: process.env.REPAYMENT_MERGE_BEFORE_TRANSFER !== "0",
       auditorPayload: profile.repaymentAuditorPayload
     }
   });
@@ -741,11 +811,7 @@ export const proveDemoRepaymentHistory = async (
     );
   }
 
-  const rootTx = await setRepaymentHistoryRoot(config, {
-    positionId,
-    historyRoot: fixture.hex.historyRoot,
-    leafCount: fixture.leaves.length
-  });
+  const rootTx = await setRepaymentHistoryRoot(config, { positionId });
 
   const proofJob = createRepaymentHistoryJob(db, {
     positionId: fixture.positionId,

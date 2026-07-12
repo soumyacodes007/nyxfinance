@@ -112,7 +112,13 @@ struct Phase4DeploymentSet {
     collateral_lock_registry: String,
     collateral_sufficiency_verifier: String,
     prefunding_credit_line: String,
-    mock_ctbill: String,
+    // The REAL confidential-token collateral account (F1/C1) -- no longer a
+    // plain-fungible mock, since `open_credit` now reads
+    // `confidential_balance()` from this contract.
+    collateral_token: String,
+    // The draw/repayment currency, pinned at construction (see the comment on
+    // `StorageKey::CreditToken` in the contract).
+    credit_token: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -124,7 +130,12 @@ struct Phase6DeploymentSet {
 
 #[derive(Clone)]
 struct CollateralProofArtifacts {
+    // The anchor's REAL on-chain `spendable_balance` commitment (F1/C1: no
+    // longer a free-floating witness).
     collateral_commitment: Point,
+    // `Y = sk*H`, the anchor's spending public key -- proves ownership of the
+    // account being pledged.
+    y: Point,
     credit_commitment: Point,
     lock_key: BigUint,
     position_nullifier: BigUint,
@@ -741,6 +752,7 @@ impl Runner {
             &deployments.prefunding_credit_line,
             position_id,
             &account_addrs["admin"],
+            &account_addrs["admin"],
         )?;
         let revoke_after_repay = self.assert_revoke_allowed(
             network,
@@ -840,11 +852,52 @@ impl Runner {
         eprintln!("==> ensuring phase4 identities on {network}");
         let account_addrs = self.ensure_accounts_on(&account_configs, network)?;
 
+        // F1/C1: deploy a REAL confidential-token suite and register + fund
+        // alpha's cTBill account, so the collateral-sufficiency proof binds to
+        // an actual on-chain `spendable_balance` + `spending_key` instead of a
+        // free-floating witness. `open_credit` reads this back via
+        // `confidential_balance()` -- a mock fungible token has no such
+        // function and would trap.
+        eprintln!("==> deploying real confidential-token suite (collateral = cTBill)");
+        let confidential_deployments = self.deploy_contracts(&account_addrs)?;
+        eprintln!("==> registering auditor key + OZ circuit verification keys");
+        self.register_auditor_key(&confidential_deployments.auditor_registry, &account_addrs["admin"])?;
+        self.register_verification_keys(&confidential_deployments.verifier_registry, &account_addrs["admin"])?;
+
+        let mut collateral_actors = self.initialize_actors(&account_configs, &account_addrs)?;
+        collateral_actors.retain(|name, _| name == "alpha");
+        let token_contexts = self.token_contexts(&confidential_deployments);
+        let ctbill_ctx = token_contexts
+            .iter()
+            .find(|ctx| ctx.name == "cTBill")
+            .cloned()
+            .ok_or_else(|| anyhow!("missing cTBill token context"))?;
+        eprintln!("==> registering alpha's real cTBill confidential account");
+        self.register_accounts(&mut collateral_actors, std::slice::from_ref(&ctbill_ctx), &account_addrs)?;
+
+        let collateral_amount: u128 = 2_000;
+        eprintln!("==> minting public tTBill + depositing + merging alpha's real cTBill collateral");
+        self.mint_public(&ctbill_ctx.public_token, &account_addrs["alpha"], collateral_amount as i128, &account_addrs["admin"])?;
+        self.deposit(&ctbill_ctx.confidential_token, "alpha", &account_addrs["alpha"], collateral_amount as i128)?;
+        self.merge(&ctbill_ctx.confidential_token, "alpha")?;
+        let alpha = collateral_actors
+            .get_mut("alpha")
+            .ok_or_else(|| anyhow!("missing alpha actor"))?;
+        alpha.account_mut(&ctbill_ctx).apply_deposit(&self.env, collateral_amount);
+        alpha.account_mut(&ctbill_ctx).merge(&self.env);
+        let alpha_sk = alpha.sk.clone();
+        let alpha_collateral = alpha.account(&ctbill_ctx).clone();
+        // A single deposit+merge from a zero balance yields randomness 0 (the
+        // deposit path has no blinding term) -- this is alpha's REAL on-chain
+        // `spendable_balance` opening, not an arbitrary witness.
+        let collateral_randomness = alpha_collateral.spendable_r.clone();
+
         let proof_dir = self.state_dir.join("proof-collateral-sufficiency");
-        eprintln!("==> generating collateral sufficiency VK and valid proof");
+        eprintln!("==> generating collateral sufficiency VK and valid proof bound to alpha's real balance");
         let valid_proof = self.run_collateral_sufficiency_proof(
-            2_000,
-            &BigUint::from(101u32),
+            &alpha_sk,
+            alpha_collateral.spendable_value,
+            &collateral_randomness,
             1_000,
             &BigUint::from(202u32),
             &BigUint::from(303u32),
@@ -862,7 +915,26 @@ impl Runner {
         eprintln!("==> building phase4 contract WASMs");
         self.build_phase3_wasms()?;
         eprintln!("==> deploying phase4 contracts");
-        let deployments = self.deploy_phase4_contracts(network, &account_addrs, &proof_dir.join("vk"))?;
+        // The draw/repayment currency (cUSDC) is a separate deployment from
+        // this run's own cTBill collateral suite -- it's produced by the
+        // `prove-of-life` command (which also sets up the facility ->
+        // credit-executor spend delegation and exports draw/repayment
+        // transfer artifacts). Point at that existing deployment via
+        // NYX_CREDIT_TOKEN_ID; phase4-local falls back to the collateral
+        // token so local runs don't require a prior prove-of-life pass.
+        let credit_token = env::var("NYX_CREDIT_TOKEN_ID").unwrap_or_else(|_| {
+            eprintln!(
+                "   -> NYX_CREDIT_TOKEN_ID not set, falling back to the collateral token (fine for phase4-local, NOT for a real draw/repay test on testnet)"
+            );
+            ctbill_ctx.confidential_token.clone()
+        });
+        let deployments = self.deploy_phase4_contracts(
+            network,
+            &account_addrs,
+            &proof_dir.join("vk"),
+            &ctbill_ctx.confidential_token,
+            &credit_token,
+        )?;
 
         eprintln!("==> seeding participant policy and collateral policy");
         self.set_participant(
@@ -883,7 +955,7 @@ impl Runner {
         self.set_oracle_price(
             network,
             &deployments.oracle_adapter,
-            &deployments.mock_ctbill,
+            &deployments.collateral_token,
             10_000_000,
             latest_ledger,
             &account_addrs["admin"],
@@ -891,7 +963,7 @@ impl Runner {
         self.set_collateral_policy(
             network,
             &deployments.collateral_policy_registry,
-            &deployments.mock_ctbill,
+            &deployments.collateral_token,
             true,
             500,
             5,
@@ -900,19 +972,49 @@ impl Runner {
             &account_addrs["admin"],
         )?;
 
-        eprintln!("==> opening alpha credit line with real UltraHonk proof");
-        let valid_open = self.open_credit_with_proof(
+        // Isolates the ZK-verification question (does the regenerated 11-input
+        // v2 VK + a real ownership/balance-bound proof verify on-chain) from
+        // the separate multi-party-auth question (does `anchor.require_auth()`
+        // succeed) below -- `verify_proof` itself has no auth requirement.
+        eprintln!("==> sanity check: verifying the real v2 proof directly against the deployed verifier");
+        let public_inputs_file = write_temp_file(&valid_proof.public_inputs)?;
+        let proof_file = write_temp_file(&valid_proof.proof)?;
+        let direct_verify_result = self.invoke_phase3(
+            network,
+            &deployments.collateral_sufficiency_verifier,
+            "admin",
+            "verify_proof",
+            vec![
+                "--public-inputs-file-path".to_string(),
+                public_inputs_file.path().to_string_lossy().to_string(),
+                "--proof-file-path".to_string(),
+                proof_file.path().to_string_lossy().to_string(),
+            ],
+            true,
+        )?;
+        eprintln!("   -> verifier result: {direct_verify_result}");
+
+        eprintln!("==> opening alpha credit line with real UltraHonk proof bound to alpha's real cTBill balance");
+        let valid_open = match self.open_credit_with_proof(
             network,
             &deployments.prefunding_credit_line,
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             &account_addrs["alpha"],
-            &deployments.mock_ctbill,
+            "alpha",
+            &deployments.collateral_token,
             &valid_proof,
             &valid_proof.public_inputs,
             &valid_proof.proof,
             &account_addrs["admin"],
             true,
-        )?;
+        ) {
+            Ok(result) => result,
+            // Don't let a CLI-level multi-party-auth limitation (the `stellar`
+            // CLI's `contract invoke` only supports one non-source signer at a
+            // time; see runner README/report) abort the whole run -- record it
+            // and keep going so the rest of the report still gets written.
+            Err(err) => format!("{err:#}"),
+        };
 
         eprintln!("==> checking proof and policy failure cases");
         let replay_same_nullifier = self.open_credit_with_proof(
@@ -920,7 +1022,8 @@ impl Runner {
             &deployments.prefunding_credit_line,
             "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             &account_addrs["alpha"],
-            &deployments.mock_ctbill,
+            "alpha",
+            &deployments.collateral_token,
             &valid_proof,
             &valid_proof.public_inputs,
             &valid_proof.proof,
@@ -928,9 +1031,15 @@ impl Runner {
             false,
         )?;
 
+        // All further proofs for alpha must reuse the SAME real collateral
+        // opening (spendable_value/spendable_r) -- there is exactly one real
+        // spendable_balance on-chain, so any other (amount, randomness) pair
+        // would fail the contract's public-input consistency check rather
+        // than exercising the specific failure mode each case targets.
         let negative_base_proof = self.run_collateral_sufficiency_proof(
-            2_000,
-            &BigUint::from(111u32),
+            &alpha_sk,
+            alpha_collateral.spendable_value,
+            &collateral_randomness,
             1_000,
             &BigUint::from(222u32),
             &BigUint::from(606u32),
@@ -954,7 +1063,8 @@ impl Runner {
             &deployments.prefunding_credit_line,
             "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
             &account_addrs["alpha"],
-            &deployments.mock_ctbill,
+            "alpha",
+            &deployments.collateral_token,
             &negative_base_proof,
             &negative_base_proof.public_inputs,
             &tampered_proof_bytes,
@@ -962,16 +1072,19 @@ impl Runner {
             false,
         )?;
 
+        // Public-input layout (v2, 11 inputs): c_spend(0,1) | y(2,3) |
+        // credit_commitment(4,5) | oracle_price_e7(6) | haircut_bps(7) | ...
         let mut wrong_price_artifacts = negative_base_proof.clone();
         wrong_price_artifacts.oracle_price_e7 = 9_000_000;
         let wrong_price_inputs =
-            replace_public_input_u128(&negative_base_proof.public_inputs, 4, wrong_price_artifacts.oracle_price_e7);
+            replace_public_input_u128(&negative_base_proof.public_inputs, 6, wrong_price_artifacts.oracle_price_e7);
         let wrong_public_oracle_price = self.open_credit_with_proof(
             network,
             &deployments.prefunding_credit_line,
             "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
             &account_addrs["alpha"],
-            &deployments.mock_ctbill,
+            "alpha",
+            &deployments.collateral_token,
             &wrong_price_artifacts,
             &wrong_price_inputs,
             &negative_base_proof.proof,
@@ -982,13 +1095,14 @@ impl Runner {
         let mut wrong_haircut_artifacts = negative_base_proof.clone();
         wrong_haircut_artifacts.haircut_bps = 600;
         let wrong_haircut_inputs =
-            replace_public_input_u128(&negative_base_proof.public_inputs, 5, wrong_haircut_artifacts.haircut_bps as u128);
+            replace_public_input_u128(&negative_base_proof.public_inputs, 7, wrong_haircut_artifacts.haircut_bps as u128);
         let wrong_public_haircut = self.open_credit_with_proof(
             network,
             &deployments.prefunding_credit_line,
             "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
             &account_addrs["alpha"],
-            &deployments.mock_ctbill,
+            "alpha",
+            &deployments.collateral_token,
             &wrong_haircut_artifacts,
             &wrong_haircut_inputs,
             &negative_base_proof.proof,
@@ -997,8 +1111,9 @@ impl Runner {
         )?;
 
         let same_lock_different_tenor_proof = self.run_collateral_sufficiency_proof(
-            2_000,
-            &BigUint::from(101u32),
+            &alpha_sk,
+            alpha_collateral.spendable_value,
+            &collateral_randomness,
             1_000,
             &BigUint::from(202u32),
             &BigUint::from(404u32),
@@ -1013,7 +1128,8 @@ impl Runner {
             &deployments.prefunding_credit_line,
             "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
             &account_addrs["alpha"],
-            &deployments.mock_ctbill,
+            "alpha",
+            &deployments.collateral_token,
             &same_lock_different_tenor_proof,
             &same_lock_different_tenor_proof.public_inputs,
             &same_lock_different_tenor_proof.proof,
@@ -1023,8 +1139,9 @@ impl Runner {
 
         let over_borrow_proof_generation = self
             .run_collateral_sufficiency_proof(
-                2_000,
-                &BigUint::from(101u32),
+                &alpha_sk,
+                alpha_collateral.spendable_value,
+                &collateral_randomness,
                 3_000,
                 &BigUint::from(202u32),
                 &BigUint::from(505u32),
@@ -1043,7 +1160,7 @@ impl Runner {
             .unwrap_or_else(|| "unexpectedly generated over-borrow proof".to_string());
 
         let wrong_randomness_generation = self
-            .run_wrong_randomness_collateral_proof(&valid_proof)
+            .run_wrong_randomness_collateral_proof(&alpha_sk, &valid_proof)
             .err()
             .map(|err| format!("{err:#}"))
             .unwrap_or_else(|| "unexpectedly generated wrong-randomness proof".to_string());
@@ -1085,14 +1202,28 @@ impl Runner {
         Ok(())
     }
 
+    // v2 (F1/C1): `sk`/`collateral_amount`/`collateral_randomness` must be the
+    // anchor's REAL confidential-token spending secret and the real opening
+    // of its on-chain `spendable_balance` -- the caller must supply these
+    // (there is no way to derive a hidden balance's opening from chain state
+    // alone). `y = sk*H` is computed here and included in the output so
+    // callers don't need Grumpkin scalar multiplication of their own.
     fn print_collateral_fixture(
         &self,
         lock_key_hex: &str,
         position_secret_dec: &str,
         oracle_price_e7_override: Option<&str>,
+        sk_dec: &str,
+        collateral_amount_dec: &str,
+        collateral_randomness_dec: &str,
     ) -> Result<()> {
-        let collateral_amount = 2_000u128;
-        let collateral_randomness = BigUint::from(111u32);
+        let sk = BigUint::parse_bytes(sk_dec.as_bytes(), 10)
+            .ok_or_else(|| anyhow!("invalid sk decimal"))?;
+        let collateral_amount: u128 = collateral_amount_dec
+            .parse()
+            .context("invalid collateral_amount decimal")?;
+        let collateral_randomness = BigUint::parse_bytes(collateral_randomness_dec.as_bytes(), 10)
+            .ok_or_else(|| anyhow!("invalid collateral_randomness decimal"))?;
         let credit_amount = 1_000u128;
         let credit_randomness = BigUint::from(222u32);
         let oracle_price_e7 = match oracle_price_e7_override {
@@ -1106,6 +1237,9 @@ impl Runner {
         let position_secret = BigUint::parse_bytes(position_secret_dec.as_bytes(), 10)
             .ok_or_else(|| anyhow!("invalid position secret decimal"))?;
 
+        let y = point_mul_big(&self.env, &h_point(&self.env), &sk);
+        let y_x = point_x(&self.env, &y);
+        let y_y = point_y(&self.env, &y);
         let collateral_commitment =
             commit(&self.env, collateral_amount, &collateral_randomness);
         let credit_commitment = commit(&self.env, credit_amount, &credit_randomness);
@@ -1130,6 +1264,7 @@ impl Runner {
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
+                "sk": sk.to_str_radix(10),
                 "collateralAmount": collateral_amount.to_string(),
                 "collateralRandomness": collateral_randomness.to_str_radix(10),
                 "creditAmount": credit_amount.to_string(),
@@ -1137,6 +1272,8 @@ impl Runner {
                 "positionSecret": position_secret.to_str_radix(10),
                 "collateralCommitmentX": collateral_commitment_x.to_str_radix(10),
                 "collateralCommitmentY": collateral_commitment_y.to_str_radix(10),
+                "yX": y_x.to_str_radix(10),
+                "yY": y_y.to_str_radix(10),
                 "creditCommitmentX": credit_commitment_x.to_str_radix(10),
                 "creditCommitmentY": credit_commitment_y.to_str_radix(10),
                 "oraclePriceE7": oracle_price_e7.to_string(),
@@ -1147,6 +1284,8 @@ impl Runner {
                 "hex": {
                     "collateralCommitmentX": field_to_hex(&collateral_commitment_x),
                     "collateralCommitmentY": field_to_hex(&collateral_commitment_y),
+                    "yX": field_to_hex(&y_x),
+                    "yY": field_to_hex(&y_y),
                     "creditCommitmentX": field_to_hex(&credit_commitment_x),
                     "creditCommitmentY": field_to_hex(&credit_commitment_y),
                     "oraclePriceE7": field_to_hex(&BigUint::from(oracle_price_e7)),
@@ -1431,8 +1570,19 @@ impl Runner {
     ) -> Result<BTreeMap<String, String>> {
         let mut out = BTreeMap::new();
         for cfg in configs {
-            self.run_stellar(["keys", "generate", cfg.name, "--overwrite"], true)?;
-            self.run_stellar(["keys", "fund", cfg.name, "-n", network], true)?;
+            // Reuse an existing identity if one is already present (matches
+            // `ensure_accounts`'s behavior). This runner and `prove-of-life`
+            // share the same identity store; unconditionally overwriting here
+            // silently clobbers whatever Stellar account another command's
+            // run already set up for e.g. "alpha", desyncing the anchor
+            // address the backend has on file (from a `prove-of-life` report)
+            // from whatever this deployment actually registered.
+            if network == TESTNET_NAME && self.run_stellar(["keys", "public-key", cfg.name], true).is_ok() {
+                self.run_stellar(["keys", "fund", cfg.name, "-n", network], true)?;
+            } else {
+                self.run_stellar(["keys", "generate", cfg.name, "--overwrite"], true)?;
+                self.run_stellar(["keys", "fund", cfg.name, "-n", network], true)?;
+            }
             let address = self
                 .run_stellar(["keys", "public-key", cfg.name], true)?
                 .trim()
@@ -1586,6 +1736,11 @@ impl Runner {
                 collateral_policy_registry.clone(),
                 "--collateral-lock-registry".to_string(),
                 collateral_lock_registry.clone(),
+                // Legacy phase3 harness has no separate facility/credit token;
+                // reusing mock_ctbill here is only to satisfy the constructor,
+                // see the note on `repay_credit`.
+                "--credit-token".to_string(),
+                mock_ctbill.clone(),
             ],
         )?;
 
@@ -1605,14 +1760,17 @@ impl Runner {
         network: &str,
         addrs: &BTreeMap<String, String>,
         vk_path: &Path,
+        collateral_token: &str,
+        credit_token: &str,
     ) -> Result<Phase4DeploymentSet> {
         let admin = addrs["admin"].as_str();
-        let mock_ctbill = self.deploy_demo_token_on(network, "mock-cTBill", admin)?;
         let collateral_sufficiency_verifier = self.deploy_wasm_on(
             network,
             self.wasm_path("nyx-collateral-sufficiency-verifier"),
             "admin",
             vec![
+                "--admin".to_string(),
+                admin.to_string(),
                 "--vk-bytes-file-path".to_string(),
                 vk_path.to_string_lossy().to_string(),
             ],
@@ -1678,6 +1836,8 @@ impl Runner {
                 collateral_lock_registry.clone(),
                 "--cs-verifier".to_string(),
                 collateral_sufficiency_verifier.clone(),
+                "--credit-token".to_string(),
+                credit_token.to_string(),
             ],
         )?;
 
@@ -1688,7 +1848,8 @@ impl Runner {
             collateral_lock_registry,
             collateral_sufficiency_verifier,
             prefunding_credit_line,
-            mock_ctbill,
+            collateral_token: collateral_token.to_string(),
+            credit_token: credit_token.to_string(),
         })
     }
 
@@ -1703,6 +1864,8 @@ impl Runner {
             self.wasm_path("nyx-repayment-history-verifier"),
             "admin",
             vec![
+                "--admin".to_string(),
+                admin.to_string(),
                 "--vk-bytes-file-path".to_string(),
                 vk_path.to_string_lossy().to_string(),
             ],
@@ -1913,6 +2076,40 @@ impl Runner {
         self.run_stellar_owned(args, check)
     }
 
+    // Like `invoke_phase3`, but adds `--sign-with-key` for each of
+    // `extra_signers` -- needed when the invoked function requires
+    // `require_auth()` from an address other than `source` (e.g. `open_credit`'s
+    // anchor auth, K3).
+    fn invoke_with_signers(
+        &self,
+        network: &str,
+        contract_id: &str,
+        source: &str,
+        extra_signers: &[&str],
+        function: &str,
+        mut fn_args: Vec<String>,
+        check: bool,
+    ) -> Result<String> {
+        let mut args = vec![
+            "contract".to_string(),
+            "invoke".to_string(),
+            "--id".to_string(),
+            contract_id.to_string(),
+            "--source-account".to_string(),
+            source.to_string(),
+        ];
+        for signer in extra_signers {
+            args.push("--sign-with-key".to_string());
+            args.push(signer.to_string());
+        }
+        args.push("-n".to_string());
+        args.push(network.to_string());
+        args.push("--".to_string());
+        args.push(function.to_string());
+        args.append(&mut fn_args);
+        self.run_stellar_owned(args, check)
+    }
+
     fn set_participant(
         &self,
         network: &str,
@@ -2089,11 +2286,22 @@ impl Runner {
         }
     }
 
+    // NOTE: this is the legacy phase3 harness (pre-v2, no ZK proof, "admin"
+    // stands in for both operator and anchor). `repay` now requires the
+    // anchor's own `require_auth()` plus a real cross-contract transfer to
+    // `credit_token` -- phase3's harness never registered a confidential
+    // account for a distinct facility/credit token, so this call only works
+    // here because `admin` happens to also be the position's anchor and
+    // `invoke_phase3`'s `--sign-with-key` covers that single signer; it does
+    // NOT exercise the new atomic-transfer path (see phase4/backend for the
+    // validated v2 flow). Kept passing only so this legacy dispatch path
+    // doesn't silently bit-rot at the CLI-arg level.
     fn repay_credit(
         &self,
         network: &str,
         credit_line: &str,
         position_id: &str,
+        facility: &str,
         admin_addr: &str,
     ) -> Result<()> {
         self.invoke_phase3(
@@ -2104,8 +2312,12 @@ impl Runner {
             vec![
                 "--position-id".to_string(),
                 position_id.to_string(),
+                "--facility".to_string(),
+                facility.to_string(),
                 "--repayment-commitment".to_string(),
                 "9999999999999999999999999999999999999999999999999999999999999999".to_string(),
+                "--transfer-data".to_string(),
+                "00".to_string(),
                 "--operator".to_string(),
                 admin_addr.to_string(),
             ],
@@ -2137,12 +2349,14 @@ impl Runner {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     fn open_credit_with_proof(
         &self,
         network: &str,
         credit_line: &str,
         position_id: &str,
         anchor: &str,
+        anchor_identity: &str,
         collateral_token: &str,
         artifacts: &CollateralProofArtifacts,
         public_inputs: &[u8],
@@ -2152,10 +2366,15 @@ impl Runner {
     ) -> Result<String> {
         let public_inputs_file = write_temp_file(public_inputs)?;
         let proof_file = write_temp_file(proof)?;
-        let result = self.invoke_phase3(
+        // K3: `open_credit` now requires `anchor.require_auth()` in addition to
+        // the operator's manager-role auth. `--source-account` signs for the
+        // operator (admin); `--sign-with-key` adds the anchor's signature for
+        // its own auth entry, using the anchor's locally-known identity.
+        let result = self.invoke_with_signers(
             network,
             credit_line,
             "admin",
+            &[anchor_identity],
             "open_credit",
             vec![
                 "--position-id".to_string(),
@@ -2166,10 +2385,6 @@ impl Runner {
                 collateral_token.to_string(),
                 "--lock-key".to_string(),
                 field_to_hex(&artifacts.lock_key),
-                "--collateral-commitment-x".to_string(),
-                field_to_hex(&point_x(&self.env, &artifacts.collateral_commitment)),
-                "--collateral-commitment-y".to_string(),
-                field_to_hex(&point_y(&self.env, &artifacts.collateral_commitment)),
                 "--credit-commitment-x".to_string(),
                 field_to_hex(&point_x(&self.env, &artifacts.credit_commitment)),
                 "--credit-commitment-y".to_string(),
@@ -3392,8 +3607,10 @@ impl Runner {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     fn run_collateral_sufficiency_proof(
         &self,
+        sk: &BigUint,
         collateral_amount: u128,
         collateral_randomness: &BigUint,
         credit_amount: u128,
@@ -3405,6 +3622,12 @@ impl Runner {
         tenor_days: u32,
         out_dir: &Path,
     ) -> Result<CollateralProofArtifacts> {
+        let y = point_mul_big(&self.env, &h_point(&self.env), sk);
+        // c_spend: the anchor's REAL spendable-balance commitment (F1/C1).
+        // Callers must pass the amount/randomness that actually opens the
+        // on-chain `spendable_balance` for this `sk`'s account, or `open_credit`
+        // will reject the proof (its own `confidential_balance()` read won't
+        // match these public inputs).
         let collateral_commitment = commit(&self.env, collateral_amount, collateral_randomness);
         let credit_commitment = commit(&self.env, credit_amount, credit_randomness);
         let position_nullifier = poseidon_with_domain_any(
@@ -3424,13 +3647,16 @@ impl Runner {
         self.write_prover_file(
             "collateral_sufficiency",
             &[
+                ("sk", sk),
                 ("collateral_amount", &BigUint::from(collateral_amount)),
                 ("collateral_randomness", collateral_randomness),
                 ("credit_amount", &BigUint::from(credit_amount)),
                 ("credit_randomness", credit_randomness),
                 ("position_secret", position_secret),
-                ("collateral_commitment_x", &point_x(&self.env, &collateral_commitment)),
-                ("collateral_commitment_y", &point_y(&self.env, &collateral_commitment)),
+                ("c_spend_x", &point_x(&self.env, &collateral_commitment)),
+                ("c_spend_y", &point_y(&self.env, &collateral_commitment)),
+                ("y_x", &point_x(&self.env, &y)),
+                ("y_y", &point_y(&self.env, &y)),
                 ("credit_commitment_x", &point_x(&self.env, &credit_commitment)),
                 ("credit_commitment_y", &point_y(&self.env, &credit_commitment)),
                 ("oracle_price_e7", &BigUint::from(oracle_price_e7)),
@@ -3445,6 +3671,7 @@ impl Runner {
 
         Ok(CollateralProofArtifacts {
             collateral_commitment,
+            y,
             credit_commitment,
             lock_key: lock_key.clone(),
             position_nullifier,
@@ -3458,19 +3685,23 @@ impl Runner {
 
     fn run_wrong_randomness_collateral_proof(
         &self,
+        sk: &BigUint,
         valid: &CollateralProofArtifacts,
     ) -> Result<()> {
         let out_dir = self.state_dir.join("proof-collateral-sufficiency-wrong-randomness");
         self.write_prover_file(
             "collateral_sufficiency",
             &[
+                ("sk", sk),
                 ("collateral_amount", &BigUint::from(2_000u32)),
                 ("collateral_randomness", &BigUint::from(999u32)),
                 ("credit_amount", &BigUint::from(1_000u32)),
                 ("credit_randomness", &BigUint::from(202u32)),
                 ("position_secret", &BigUint::from(303u32)),
-                ("collateral_commitment_x", &point_x(&self.env, &valid.collateral_commitment)),
-                ("collateral_commitment_y", &point_y(&self.env, &valid.collateral_commitment)),
+                ("c_spend_x", &point_x(&self.env, &valid.collateral_commitment)),
+                ("c_spend_y", &point_y(&self.env, &valid.collateral_commitment)),
+                ("y_x", &point_x(&self.env, &valid.y)),
+                ("y_y", &point_y(&self.env, &valid.y)),
                 ("credit_commitment_x", &point_x(&self.env, &valid.credit_commitment)),
                 ("credit_commitment_y", &point_y(&self.env, &valid.credit_commitment)),
                 ("oracle_price_e7", &BigUint::from(valid.oracle_price_e7)),
@@ -4191,7 +4422,29 @@ fn main() -> Result<()> {
             let lock_key = env::args().nth(2).context("missing lock key hex")?;
             let position_secret = env::args().nth(3).context("missing position secret decimal")?;
             let oracle_price_e7 = env::args().nth(4);
-            runner.print_collateral_fixture(&lock_key, &position_secret, oracle_price_e7.as_deref())
+            // v2 (F1/C1): the collateral opening must be the anchor's REAL
+            // on-chain spendable_balance, not an invented witness. Callers
+            // must supply the account's spending secret and the real
+            // (amount, randomness) opening -- there is no way to derive
+            // these from chain state alone (the balance is hidden), so
+            // whoever runs the prover must track its own balance history.
+            let sk = env::args().nth(5).context(
+                "missing sk decimal (anchor's confidential spending secret) -- required since v2 binds the proof to a real balance",
+            )?;
+            let collateral_amount = env::args()
+                .nth(6)
+                .context("missing collateral_amount decimal (the real spendable_balance opening)")?;
+            let collateral_randomness = env::args()
+                .nth(7)
+                .context("missing collateral_randomness decimal (the real spendable_balance opening)")?;
+            runner.print_collateral_fixture(
+                &lock_key,
+                &position_secret,
+                oracle_price_e7.as_deref(),
+                &sk,
+                &collateral_amount,
+                &collateral_randomness,
+            )
         }
         "repayment-history-fixture" => {
             let position_id = env::args().nth(2).context("missing position id hex")?;

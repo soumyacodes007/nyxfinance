@@ -1,0 +1,56 @@
+{
+  "generators": {
+    "address": 11,
+    "nonce": 0,
+    "mux_id": 0
+  },
+  "auth": [
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAXI7N",
+              "function_name": "open_credit",
+              "args": [
+                {
+                  "bytes": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                },
+                {
+                  "bytes": "e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3"
+                },
+                {
+                  "bytes": "3131313131313131313131313131313131313131313131313131313131313131"
+                },
+                {
+                  "bytes": "3232323232323232323232323232323232323232323232323232323232323232"
+                },
+                {
+                  "u128": "10000000"
+                },
+                {
+                  "u32": 500
+                },
+                {
+                  "u32": 3
+                },
+                {
+                  "bytes": "e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4"
+                },
+                {
+                  "bytes": "111111111111111111111111111111111111111111111111111111111111111112121212121212121212121212121212121212121212121212121212121212122121212121212121212121212121212121212121212121212121212121212121222222222222222222222222222222222222222222222222222222222222222231313131313131313131313131313131313131313131313131313131313131313232323232323232323232323232323232323232323232323232323232323232000000000000000000000000000000000000000000000000000000000098968000000000000000000000000000000000000000000000000000000000000001f40000000000000000000000000000000000000000000000000000000000000003e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3

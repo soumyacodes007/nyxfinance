@@ -20,9 +20,7 @@ const seedLeafSchema = z.object({
 });
 
 const rootSchema = z.object({
-  positionId: hex32,
-  historyRoot: hex32,
-  leafCount: z.number().int().positive()
+  positionId: hex32
 });
 
 const verifySchema = z.object({

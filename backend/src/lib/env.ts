@@ -52,6 +52,12 @@ export const config = {
   distributionAccount: required("DISTRIBUTION_ACCOUNT", "REPLACE_ME"),
   demoAnchorAccount: required("DEMO_ANCHOR_ACCOUNT", "REPLACE_ME"),
   demoAnchorSecretKey: optional("DEMO_ANCHOR_SECRET_KEY"),
+  // F1/C1 v2: the anchor's confidential-token spending secret (Grumpkin
+  // scalar, NOT the Stellar ed25519 key above) and the real opening of its
+  // on-chain spendable_balance. Same custody class as the secret key above.
+  demoAnchorConfidentialSk: optional("ANCHOR_CONFIDENTIAL_SK"),
+  demoAnchorCollateralAmount: optional("ANCHOR_COLLATERAL_AMOUNT"),
+  demoAnchorCollateralRandomness: optional("ANCHOR_COLLATERAL_RANDOMNESS"),
   demoAccounts: {
     alpha: optional("ALPHA_PUBLIC_KEY"),
     facility: optional("FACILITY_PUBLIC_KEY"),

@@ -1,0 +1,53 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import json,sys; d=json.load\\(open\\('oz-confidential/state/proof-of-life-report.json'\\)\\); print\\(type\\(d\\)\\); print\\(list\\(d.keys\\(\\)\\) if isinstance\\(d,dict\\) else len\\(d\\)\\)\")",
+      "Bash(python3 *)",
+      "Bash(xargs -r ls -la)",
+      "Bash(stellar --version)",
+      "Bash(soroban --version)",
+      "Bash(stellar contract *)",
+      "Bash(stellar network *)",
+      "Bash(stellar keys *)",
+      "Bash(stellar tx *)",
+      "Bash(stellar xdr *)",
+      "Bash(curl -s -m 20 -X POST \"https://mainnet.sorobanrpc.com\" -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getNetwork\"}')",
+      "Bash(curl -s -m 20 \"https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd\")",
+      "Bash(grep -nA12 \"profile\" Cargo.toml)",
+      "Bash(rustup target *)",
+      "Bash(timeout 500 cargo check -p nyx-prefunding-credit-line -p nyx-collateral-lock-registry -p nyx-oracle-adapter -p nyx-repayment-history-registry)",
+      "Bash(timeout 400 cargo check -p nyx-prefunding-credit-line -p nyx-collateral-lock-registry -p nyx-oracle-adapter -p nyx-repayment-history-registry)",
+      "Bash(timeout 500 cargo check --workspace)",
+      "Bash(nargo --version)",
+      "Bash(bb --version)",
+      "Bash(timeout 300 nargo info --package collateral_sufficiency)",
+      "Bash(timeout 300 nargo info --package repayment_history)",
+      "Bash(timeout 300 nargo info --package circuit_collateral_sufficiency)",
+      "Bash(timeout 300 nargo info --package circuit_repayment_history)",
+      "Bash(timeout 300 nargo info --package circuit_transfer)",
+      "Bash(timeout 400 nargo test --package circuit_collateral_sufficiency)",
+      "Bash(timeout 300 nargo compile --package circuit_collateral_sufficiency)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(timeout 300 cargo check -p nyx-prefunding-credit-line)",
+      "Bash(timeout 300 nargo test --package circuit_repayment_history)",
+      "Bash(ls -la .github/workflows/)",
+      "Bash(head -40 .github/workflows/noir.yml)",
+      "WebSearch",
+      "WebFetch(domain:docs.blend.capital)",
+      "Read(//tmp/claude-1000/**)",
+      "Bash(gh api *)",
+      "Bash(curl -s -m 8 -X POST https://soroban-testnet.stellar.org -H 'content-type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"gethealth\"}')",
+      "Bash(curl -s -m 10 https://raven.stellar.buzz/health)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(git check-ignore *)",
+      "Bash(git checkout *)",
+      "Bash(git add *)",
+      "Bash(grep -iE \"\\\\.env$|secret\")",
+      "Bash(git commit *)",
+      "Bash(git push *)"
+    ]
+  },
+  "disabledMcpjsonServers": [
+    "stellar-raven"
+  ]
+}

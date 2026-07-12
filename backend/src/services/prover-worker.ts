@@ -43,14 +43,19 @@ const run = (command: string, args: string[], cwd: string): Promise<string> =>
 
 const writeProverToml = (root: string, payload: CollateralSufficiencyProofPayload): void => {
   const circuitDir = join(root, "circuits", "collateral_sufficiency");
+  // Field names match `collateral_sufficiency/src/main.nr`'s v2 signature
+  // (F1/C1: ownership + real-balance binding, 11 public inputs).
   const fields: Record<string, string | number> = {
+    sk: payload.sk,
     collateral_amount: payload.collateralAmount,
     collateral_randomness: payload.collateralRandomness,
     credit_amount: payload.creditAmount,
     credit_randomness: payload.creditRandomness,
     position_secret: payload.positionSecret,
-    collateral_commitment_x: payload.collateralCommitmentX,
-    collateral_commitment_y: payload.collateralCommitmentY,
+    c_spend_x: payload.collateralCommitmentX,
+    c_spend_y: payload.collateralCommitmentY,
+    y_x: payload.yX,
+    y_y: payload.yY,
     credit_commitment_x: payload.creditCommitmentX,
     credit_commitment_y: payload.creditCommitmentY,
     oracle_price_e7: payload.oraclePriceE7,

@@ -9,6 +9,7 @@ import {
 
 const collateralProofSchema = z.object({
   quoteId: z.string().optional(),
+  sk: z.string().regex(/^[0-9]+$/),
   collateralAmount: z.string().regex(/^[0-9]+$/),
   collateralRandomness: z.string().regex(/^[0-9]+$/),
   creditAmount: z.string().regex(/^[0-9]+$/),
@@ -16,6 +17,8 @@ const collateralProofSchema = z.object({
   positionSecret: z.string().regex(/^[0-9]+$/),
   collateralCommitmentX: z.string().regex(/^[0-9]+$/),
   collateralCommitmentY: z.string().regex(/^[0-9]+$/),
+  yX: z.string().regex(/^[0-9]+$/),
+  yY: z.string().regex(/^[0-9]+$/),
   creditCommitmentX: z.string().regex(/^[0-9]+$/),
   creditCommitmentY: z.string().regex(/^[0-9]+$/),
   lockKey: z.string().regex(/^[0-9]+$/),

@@ -1,5 +1,8 @@
 #![no_std]
 
+#[cfg(test)]
+mod test;
+
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error,
     symbol_short, Address, Bytes, BytesN, Env, IntoVal, Symbol, Val, Vec,
@@ -137,6 +140,7 @@ enum StorageKey {
     CollateralPolicyRegistry,
     CollateralLockRegistry,
     CollateralSufficiencyVerifier,
+    CreditToken,
     UsedNullifier(BytesN<32>),
     Position(BytesN<32>),
     Paused,
@@ -147,6 +151,7 @@ pub struct PrefundingCreditLineContract;
 
 #[contractimpl]
 impl PrefundingCreditLineContract {
+    #[allow(clippy::too_many_arguments)]
     pub fn __constructor(
         e: &Env,
         admin: Address,
@@ -155,6 +160,7 @@ impl PrefundingCreditLineContract {
         collateral_policy_registry: Address,
         collateral_lock_registry: Address,
         cs_verifier: Address,
+        credit_token: Address,
     ) {
         access_control::set_admin(e, &admin);
         access_control::grant_role_no_auth(e, &manager, &MANAGER_ROLE, &admin);
@@ -168,6 +174,14 @@ impl PrefundingCreditLineContract {
         e.storage()
             .instance()
             .set(&StorageKey::CollateralSufficiencyVerifier, &cs_verifier);
+        // The draw/repayment currency is pinned once at construction, not
+        // caller-supplied at execute_draw/repay time: unlike collateral_token
+        // (validated against the collateral-policy registry's eligibility
+        // whitelist), there is no equivalent registry for the credit
+        // currency, so accepting it as a parameter would let a compromised
+        // operator point the transfer cross-call at a fake contract that
+        // trivially "succeeds" without moving real value.
+        e.storage().instance().set(&StorageKey::CreditToken, &credit_token);
     }
 
     // ---- P1 safety: emergency pause + admin-gated upgrade ----
@@ -307,13 +321,20 @@ impl PrefundingCreditLineContract {
             .ledger()
             .sequence()
             .saturating_add(tenor_days.saturating_mul(LEDGERS_PER_DAY));
+        // Passes `tenor_days` (a proven, ledger-independent public input) to
+        // the lock registry rather than this `due_ledger`, so the registry
+        // can compute its own expiry from `e.ledger().sequence()` read at its
+        // own execution time -- both computations happen within the same
+        // atomic transaction, so they land on the same ledger and agree,
+        // without baking a simulation-time ledger number into an authorized
+        // cross-contract call's arguments.
         Self::lock_collateral(
             e,
             lock_key.clone(),
             anchor.clone(),
             collateral_token.clone(),
             position_id.clone(),
-            due_ledger,
+            tenor_days,
             operator.clone(),
         );
         // F2: actually encumber the collateral. Freezing the anchor's confidential
@@ -357,16 +378,28 @@ impl PrefundingCreditLineContract {
         position_id
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[only_role(operator, "manager")]
     pub fn execute_draw(
         e: &Env,
         position_id: BytesN<32>,
         facility: Address,
+        credit_executor: Address,
         transfer_commitment_x: BytesN<32>,
         transfer_commitment_y: BytesN<32>,
+        transfer_data: Bytes,
         operator: Address,
     ) {
         Self::ensure_not_paused(e);
+        // `confidential_transfer_from`'s delegated `spender` must be a real
+        // registered confidential account (its spending key is used for the
+        // allowance's ECDH escrow) -- a contract address cannot hold that key
+        // material, so unlike the anchor/facility args, this contract cannot
+        // act as its own spender. `credit_executor` is the real EOA the
+        // facility delegated an allowance to via `set_spender`; it must
+        // co-sign this call, the same multi-party pattern K3 uses for the
+        // anchor in `open_credit`.
+        credit_executor.require_auth();
         let mut position = Self::position(e, position_id.clone());
         if !position.open {
             panic_with_error!(e, CreditLineError::PositionNotOpen);
@@ -392,9 +425,22 @@ impl PrefundingCreditLineContract {
         }
         position.drawn = true;
         let anchor = position.anchor.clone();
+        // K6 (checks-effects-interactions): commit `drawn = true` before the
+        // cross-contract transfer call, so a reentrant execute_draw during the
+        // token's transfer hooks sees the position as already drawn. If the
+        // transfer call below panics (bad proof, no allowance, wrong amount),
+        // Soroban unwinds this whole transaction including this write.
         e.storage()
             .persistent()
             .set(&StorageKey::Position(position_id.clone()), &position);
+        // Was previously a gap: execute_draw only checked the commitment
+        // matched the proven credit amount, but never verified a real transfer
+        // happened -- the actual confidential_transfer_from was a separate,
+        // non-atomic transaction the backend submitted independently, so an
+        // operator could mark a position drawn without ever moving real
+        // value. Now the credit-line contract performs the transfer itself,
+        // atomically, as part of this same call.
+        Self::draw_transfer(e, credit_executor, facility.clone(), anchor.clone(), transfer_data);
         DrawExecuted {
             position_id,
             anchor,
@@ -409,7 +455,9 @@ impl PrefundingCreditLineContract {
     pub fn repay(
         e: &Env,
         position_id: BytesN<32>,
+        facility: Address,
         repayment_commitment: BytesN<32>,
+        transfer_data: Bytes,
         operator: Address,
     ) {
         let mut position = Self::position(e, position_id.clone());
@@ -420,14 +468,27 @@ impl PrefundingCreditLineContract {
             panic_with_error!(e, CreditLineError::PositionDefaulted);
         }
         let anchor = position.anchor.clone();
+        // Repayment debits the anchor's own confidential balance, so unlike
+        // the operator-only draw/liquidate path, the anchor must consent here
+        // too (same reasoning as K3's open_credit anchor.require_auth()).
+        anchor.require_auth();
         let collateral_token = position.collateral_token.clone();
         position.open = false;
-        Self::release_collateral(e, position.lock_key.clone(), operator.clone());
-        // F2: releasing the credit line unfreezes the pledged collateral account.
-        Self::unfreeze_collateral(e, collateral_token, anchor.clone(), operator);
         e.storage()
             .persistent()
             .set(&StorageKey::Position(position_id.clone()), &position);
+        Self::release_collateral(e, position.lock_key.clone(), operator.clone());
+        // F2: releasing the credit line unfreezes the pledged collateral account.
+        Self::unfreeze_collateral(e, collateral_token, anchor.clone(), operator);
+        // Was previously a gap: repay() closed the position and unfroze the
+        // collateral purely on the operator's say-so that a repayment had
+        // been made elsewhere, with no on-chain check. Now repay() performs
+        // the confidential_transfer itself: `from.require_auth()` inside the
+        // token contract is satisfied by the anchor's own signature already
+        // collected on this transaction above, so the transfer and the
+        // position closure/unfreeze are one atomic unit -- if the repayment
+        // proof is invalid, the whole call (including the unfreeze) reverts.
+        Self::repay_transfer(e, anchor.clone(), facility, transfer_data);
         Repaid {
             position_id,
             anchor,
@@ -494,6 +555,10 @@ impl PrefundingCreditLineContract {
 
     fn participant_policy(e: &Env) -> Address {
         e.storage().instance().get(&StorageKey::ParticipantPolicy).unwrap()
+    }
+
+    fn credit_token(e: &Env) -> Address {
+        e.storage().instance().get(&StorageKey::CreditToken).unwrap()
     }
 
     fn collateral_registry(e: &Env) -> Address {
@@ -605,13 +670,17 @@ impl PrefundingCreditLineContract {
         Bytes::from_array(e, &bytes)
     }
 
+    // Passes `tenor_days`, not a precomputed `expiry_ledger` -- see the
+    // comment on `CollateralLockRegistry::lock`. Using a value derived from
+    // `e.ledger().sequence()` here would make this call's authorized
+    // invocation arguments drift between simulation and execution.
     fn lock_collateral(
         e: &Env,
         lock_key: BytesN<32>,
         owner: Address,
         collateral_token: Address,
         position_id: BytesN<32>,
-        expiry_ledger: u32,
+        tenor_days: u32,
         operator: Address,
     ) {
         let mut args = Vec::new(e);
@@ -619,7 +688,7 @@ impl PrefundingCreditLineContract {
         args.push_back(owner.into_val(e));
         args.push_back(collateral_token.into_val(e));
         args.push_back(position_id.into_val(e));
-        args.push_back(expiry_ledger.into_val(e));
+        args.push_back(tenor_days.into_val(e));
         args.push_back(operator.into_val(e));
         e.invoke_contract::<()>(&Self::lock_registry(e), &Symbol::new(e, "lock"), args);
     }
@@ -646,6 +715,36 @@ impl PrefundingCreditLineContract {
         args.push_back(account.into_val(e));
         args.push_back(operator.into_val(e));
         e.invoke_contract::<()>(&collateral_token, &Symbol::new(e, "unfreeze"), args);
+    }
+
+    // Draw: releases facility funds to the anchor via the real EOA the
+    // facility delegated an allowance to (`credit_executor`, already
+    // `require_auth()`'d by the caller above). A contract address cannot
+    // serve as the spender here -- `set_spender`'s delegation escrows the
+    // spender's real spending key for the allowance's ECDH, which only a
+    // genuine registered confidential account (a real keypair) has.
+    fn draw_transfer(e: &Env, credit_executor: Address, facility: Address, anchor: Address, transfer_data: Bytes) {
+        let mut args = Vec::new(e);
+        args.push_back(credit_executor.into_val(e));
+        args.push_back(facility.into_val(e));
+        args.push_back(anchor.into_val(e));
+        args.push_back(transfer_data.into_val(e));
+        e.invoke_contract::<()>(
+            &Self::credit_token(e),
+            &Symbol::new(e, "confidential_transfer_from"),
+            args,
+        );
+    }
+
+    // Repay: debits the anchor's own balance to the facility.
+    // `from.require_auth()` inside `confidential_transfer` is satisfied by
+    // the anchor's own signature already required on the outer `repay` call.
+    fn repay_transfer(e: &Env, anchor: Address, facility: Address, transfer_data: Bytes) {
+        let mut args = Vec::new(e);
+        args.push_back(anchor.into_val(e));
+        args.push_back(facility.into_val(e));
+        args.push_back(transfer_data.into_val(e));
+        e.invoke_contract::<()>(&Self::credit_token(e), &Symbol::new(e, "confidential_transfer"), args);
     }
 }
 

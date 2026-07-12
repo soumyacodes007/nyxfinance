@@ -1,8 +1,11 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, symbol_short, xdr::ToXdr, Address, Bytes, Env, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, symbol_short, xdr::ToXdr, Address, Bytes, BytesN, Env, Symbol, Vec,
+};
 use stellar_access::access_control::{self as access_control, AccessControl};
-use stellar_macros::only_role;
+use stellar_contract_utils::upgradeable;
+use stellar_macros::{only_admin, only_role};
 use stellar_tokens::confidential::{
     ConfidentialAccount,
     compliance::{
@@ -46,6 +49,16 @@ impl ConfidentialTokenContract {
                 sac_passthrough: false,
             },
         );
+    }
+
+    /// Admin-gated WASM upgrade. Keep the admin behind a timelocked multisig.
+    /// This wraps OpenZeppelin's unmodified confidential-token reference
+    /// implementation (imported as a library, not vendored/edited here) --
+    /// adding this admin-gated upgrade hook to Nyx's own thin contract layer
+    /// doesn't touch any of that circuit/proof-verification logic.
+    #[only_admin]
+    pub fn upgrade(e: &Env, new_wasm_hash: BytesN<32>) {
+        upgradeable::upgrade(e, &new_wasm_hash);
     }
 
     pub fn confidential_balance_xdr(e: &Env, account: Address) -> Bytes {

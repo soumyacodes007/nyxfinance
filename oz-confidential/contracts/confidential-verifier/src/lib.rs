@@ -1,8 +1,9 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, Bytes, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, Bytes, BytesN, Env, Symbol, Vec};
 use stellar_access::access_control::{self as access_control, AccessControl};
-use stellar_macros::only_role;
+use stellar_contract_utils::upgradeable;
+use stellar_macros::{only_admin, only_role};
 use stellar_tokens::confidential::verifier::{
     storage as verifier, CircuitType, ConfidentialVerifier,
 };
@@ -17,6 +18,14 @@ impl ConfidentialVerifierContract {
     pub fn __constructor(e: &Env, admin: Address, manager: Address) {
         access_control::set_admin(e, &admin);
         access_control::grant_role_no_auth(e, &manager, &MANAGER_ROLE, &admin);
+    }
+
+    /// Admin-gated WASM upgrade. Keep the admin behind a timelocked multisig
+    /// -- this is also a ZK trust-root contract (holds the confidential-token
+    /// verification keys).
+    #[only_admin]
+    pub fn upgrade(e: &Env, new_wasm_hash: BytesN<32>) {
+        upgradeable::upgrade(e, &new_wasm_hash);
     }
 
     #[only_role(operator, "manager")]

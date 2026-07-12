@@ -55,6 +55,17 @@ impl CollateralLockRegistryContract {
         upgradeable::upgrade(e, &new_wasm_hash);
     }
 
+    // `tenor_days` (not a precomputed `expiry_ledger`) so this call's
+    // authorized-invocation arguments stay stable between simulation and
+    // execution. A caller-computed `e.ledger().sequence()`-derived
+    // `expiry_ledger` would differ between the ledger simulation ran against
+    // and the ledger the transaction actually lands in (simulate and submit
+    // are never the same instant), which makes the Soroban host reject the
+    // whole call as an authorized-invocation-tree mismatch ("Unauthorized
+    // function call") -- this was a real, reproducible bug on testnet.
+    // Computing the expiry from `e.ledger().sequence()` read HERE, inside
+    // this call's own execution, is not part of the authorized argument list
+    // at all, so it can't drift out of sync.
     #[allow(clippy::too_many_arguments)]
     #[only_role(operator, "manager")]
     pub fn lock(
@@ -63,12 +74,16 @@ impl CollateralLockRegistryContract {
         owner: Address,
         collateral_token: Address,
         position_id: BytesN<32>,
-        expiry_ledger: u32,
+        tenor_days: u32,
         operator: Address,
     ) {
         if Self::is_locked(e, lock_key.clone()) {
             panic_with_error!(e, CollateralLockError::AlreadyLocked);
         }
+        let expiry_ledger = e
+            .ledger()
+            .sequence()
+            .saturating_add(tenor_days.saturating_mul(LEDGERS_PER_DAY));
         let key = StorageKey::Lock(lock_key);
         e.storage().persistent().set(
             &key,

@@ -53,10 +53,26 @@ export const submitContractCallWithKeypair = async (
   contractId: string,
   method: string,
   args: StellarSdk.xdr.ScVal[]
+): Promise<OperatorTxResult> => submitContractCallWithSigners(config, signer, [], contractId, method, args);
+
+// Some invocations (e.g. `open_credit`, which requires both the operator's
+// manager-role auth and the anchor's own `require_auth()` per K3) need more
+// than one address to authorize the same call. `txSigner` signs the
+// transaction envelope (its account is the tx source); `authSigners` covers
+// any OTHER address-credentialed Soroban auth entries the simulation comes
+// back with, matched by public key. See the "multi-party auth" pattern in
+// `authorizeEntry`'s SDK docs.
+export const submitContractCallWithSigners = async (
+  config: AppConfig,
+  txSigner: StellarSdk.Keypair,
+  authSigners: StellarSdk.Keypair[],
+  contractId: string,
+  method: string,
+  args: StellarSdk.xdr.ScVal[]
 ): Promise<OperatorTxResult> =>
   enqueueOperatorTx(async () => {
     const rpc = buildRpcServer(config);
-    const source = await rpc.getAccount(signer.publicKey());
+    const source = await rpc.getAccount(txSigner.publicKey());
     const contract = new StellarSdk.Contract(contractId);
     let tx = new StellarSdk.TransactionBuilder(source, {
       fee: StellarSdk.BASE_FEE,
@@ -70,8 +86,30 @@ export const submitContractCallWithKeypair = async (
     if (StellarSdk.rpc.Api.isSimulationError(simulation)) {
       throw new Error(summarizeSimulationError(method, simulation.error));
     }
+
+    if (authSigners.length > 0 && simulation.result) {
+      const latestLedger = await rpc.getLatestLedger();
+      const validUntilLedgerSeq = latestLedger.sequence + 200;
+      simulation.result.auth = await Promise.all(
+        simulation.result.auth.map(async (entry) => {
+          if (entry.credentials().switch().name !== "sorobanCredentialsAddress") return entry;
+          const requiredAddress = StellarSdk.Address.fromScAddress(
+            entry.credentials().address().address()
+          ).toString();
+          const matchingSigner = authSigners.find((kp) => kp.publicKey() === requiredAddress);
+          if (!matchingSigner) return entry;
+          return StellarSdk.authorizeEntry(
+            entry,
+            matchingSigner,
+            validUntilLedgerSeq,
+            config.stellarNetworkPassphrase
+          );
+        })
+      );
+    }
+
     tx = StellarSdk.rpc.assembleTransaction(tx, simulation).build();
-    tx.sign(signer);
+    tx.sign(txSigner);
 
     const sent = await rpc.sendTransaction(tx);
     if (sent.status === "ERROR") {

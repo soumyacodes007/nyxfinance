@@ -16,6 +16,7 @@ members = [
     "contracts/repayment-history-registry",
     "contracts/repayment-history-verifier",
     "contracts/disclosure-grant-registry",
+    "contracts/timelock-controller",
     "runner",
 ]
 
@@ -42,6 +43,7 @@ stellar-access = { git = "https://github.com/OpenZeppelin/stellar-contracts.git"
 stellar-contract-utils = { git = "https://github.com/OpenZeppelin/stellar-contracts.git", rev = "539968f158e0d779f584de2821090f715a3b25e1", package = "stellar-contract-utils" }
 stellar-macros = { git = "https://github.com/OpenZeppelin/stellar-contracts.git", rev = "539968f158e0d779f584de2821090f715a3b25e1", package = "stellar-macros" }
 stellar-tokens = { git = "https://github.com/OpenZeppelin/stellar-contracts.git", rev = "539968f158e0d779f584de2821090f715a3b25e1", package = "stellar-tokens" }
+stellar-governance = { git = "https://github.com/OpenZeppelin/stellar-contracts.git", rev = "539968f158e0d779f584de2821090f715a3b25e1", package = "stellar-governance" }
 ultrahonk_soroban_verifier = { git = "https://github.com/NethermindEth/rs-soroban-ultrahonk", rev = "661db07200f890b1bd9a7349ed787c70a706dd12", default-features = false }
 
 [profile.release]

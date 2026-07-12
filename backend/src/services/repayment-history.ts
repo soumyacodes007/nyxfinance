@@ -71,14 +71,15 @@ export const seedRepaymentLeaf = async (
   return tx;
 };
 
+// The contract derives the history root itself from the leaves already
+// seeded via `seed_leaf` (C3 fix) -- it no longer accepts an operator-
+// supplied root, so there is nothing left to pass here but the position.
 export const setRepaymentHistoryRoot = async (
   config: AppConfig,
-  input: { positionId: string; historyRoot: string; leafCount: number }
+  input: { positionId: string }
 ) =>
-  submitRepaymentCall(config, "set_history_root", [
+  submitRepaymentCall(config, "finalize_history_root", [
     bytes32Arg(input.positionId, "positionId"),
-    bytes32Arg(input.historyRoot, "historyRoot"),
-    StellarSdk.nativeToScVal(input.leafCount, { type: "u32" }),
     addressArg(getOperator(config).publicKey())
   ]);
 

@@ -1,14 +1,24 @@
 #![no_std]
 
+use soroban_poseidon::Poseidon2Sponge;
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error,
-    symbol_short, Address, Bytes, BytesN, Env, IntoVal, Symbol, Vec,
+    symbol_short, Address, Bytes, BytesN, Env, IntoVal, Symbol, Vec, U256,
+    crypto::bn254::Bn254Fr,
 };
 use stellar_access::access_control::{self as access_control, AccessControl};
 use stellar_contract_utils::upgradeable;
 use stellar_macros::{only_admin, only_role};
 
 const MANAGER_ROLE: Symbol = symbol_short!("manager");
+// Must match `circuits/repayment_history/src/main.nr`'s
+// `DOMAIN_REPAYMENT_ROOT`. The root is computed on-chain (not operator
+// supplied) from the leaves actually seeded, using the identical
+// domain-separated Poseidon2 sponge the circuit uses, so a proof that
+// verifies against this root necessarily opens these exact seeded leaves.
+const DOMAIN_REPAYMENT_ROOT: u32 = 41;
+// The circuit is a fixed 3-leaf design (`repayment_amount_0/1/2`, ...).
+const LEAVES_PER_POSITION: u32 = 3;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -20,6 +30,8 @@ pub enum RepaymentHistoryError {
     ProofVerificationFailed = 4704,
     PublicInputsMismatch = 4705,
     LeafNotFound = 4706,
+    TooManyLeaves = 4707,
+    IncompleteLeafSet = 4708,
 }
 
 #[contracttype]
@@ -72,6 +84,11 @@ enum StorageKey {
     Root(BytesN<32>),
     Leaf(BytesN<32>),
     ProofNullifier(BytesN<32>),
+    // Leaf nullifiers seeded for a position, in insertion order. Bounds the
+    // root computation to leaves that were actually recorded on-chain by
+    // `seed_leaf` -- closing the gap where `set_history_root` used to accept
+    // an arbitrary, disconnected root (C3).
+    PositionLeaves(BytesN<32>),
 }
 
 #[contract]
@@ -104,6 +121,18 @@ impl RepaymentHistoryRegistryContract {
         if e.storage().persistent().has(&StorageKey::Leaf(leaf_nullifier.clone())) {
             panic_with_error!(e, RepaymentHistoryError::DuplicateLeaf);
         }
+        let leaves_key = StorageKey::PositionLeaves(position_id.clone());
+        let mut leaves: Vec<BytesN<32>> = e
+            .storage()
+            .persistent()
+            .get(&leaves_key)
+            .unwrap_or_else(|| Vec::new(e));
+        if leaves.len() >= LEAVES_PER_POSITION {
+            panic_with_error!(e, RepaymentHistoryError::TooManyLeaves);
+        }
+        leaves.push_back(leaf_nullifier.clone());
+        e.storage().persistent().set(&leaves_key, &leaves);
+
         let leaf = RepaymentLeaf {
             position_id: position_id.clone(),
             leaf_nullifier: leaf_nullifier.clone(),
@@ -126,14 +155,33 @@ impl RepaymentHistoryRegistryContract {
         .publish(e);
     }
 
+    /// Derives the history root **on-chain** from the leaves actually seeded
+    /// for `position_id` via `seed_leaf` -- the operator no longer supplies
+    /// the root directly (C3 fix). Requires exactly `LEAVES_PER_POSITION`
+    /// seeded leaves, matching the circuit's fixed 3-leaf design. The root
+    /// is `poseidon_with_domain(DOMAIN_REPAYMENT_ROOT, [position_id, leaf_0,
+    /// leaf_1, leaf_2])`, identical to `circuits/repayment_history`'s
+    /// `derived_root` -- so a proof can only verify against this root by
+    /// opening these exact seeded leaves, not arbitrary self-attested ones.
     #[only_role(operator, "manager")]
-    pub fn set_history_root(
-        e: &Env,
-        position_id: BytesN<32>,
-        history_root: BytesN<32>,
-        leaf_count: u32,
-        operator: Address,
-    ) {
+    pub fn finalize_history_root(e: &Env, position_id: BytesN<32>, operator: Address) {
+        let leaves: Vec<BytesN<32>> = e
+            .storage()
+            .persistent()
+            .get(&StorageKey::PositionLeaves(position_id.clone()))
+            .unwrap_or_else(|| Vec::new(e));
+        if leaves.len() != LEAVES_PER_POSITION {
+            panic_with_error!(e, RepaymentHistoryError::IncompleteLeafSet);
+        }
+
+        let mut inputs = Vec::new(e);
+        inputs.push_back(bytes32_to_u256(e, &position_id));
+        for leaf_nullifier in leaves.iter() {
+            inputs.push_back(bytes32_to_u256(e, &leaf_nullifier));
+        }
+        let history_root = poseidon_with_domain(e, DOMAIN_REPAYMENT_ROOT, inputs);
+        let leaf_count = leaves.len();
+
         e.storage().persistent().set(
             &StorageKey::Root(position_id.clone()),
             &HistoryRoot {
@@ -249,3 +297,28 @@ impl RepaymentHistoryRegistryContract {
 
 #[contractimpl(contracttrait)]
 impl AccessControl for RepaymentHistoryRegistryContract {}
+
+fn bytes32_to_u256(e: &Env, value: &BytesN<32>) -> U256 {
+    U256::from_be_bytes(e, &Bytes::from_array(e, &value.to_array()))
+}
+
+fn u256_to_bytes32(e: &Env, value: &U256) -> BytesN<32> {
+    let bytes = value.to_be_bytes();
+    let mut out = [0u8; 32];
+    bytes.copy_into_slice(&mut out);
+    BytesN::from_array(e, &out)
+}
+
+// Domain-separated Poseidon2 sponge, matching `circuits/lib/src/lib.nr`'s
+// `poseidon_with_domain` bit-for-bit: the domain tag is absorbed first,
+// followed by `inputs`, over the Barretenberg-compatible BN254 sponge
+// (rate 3, capacity IV = len << 64).
+fn poseidon_with_domain(e: &Env, domain: u32, inputs: Vec<U256>) -> BytesN<32> {
+    let mut all: Vec<U256> = Vec::new(e);
+    all.push_back(U256::from_u32(e, domain));
+    for input in inputs.iter() {
+        all.push_back(input);
+    }
+    let out = Poseidon2Sponge::<4, Bn254Fr>::new(e).compute_hash(&all);
+    u256_to_bytes32(e, &out)
+}
